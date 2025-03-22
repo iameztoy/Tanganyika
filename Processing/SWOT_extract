@@ -1,0 +1,126 @@
+"""
+Extract wse band from a set of .nc files downloaded from https://podaac.jpl.nasa.gov and convert to geotiff
+Target: SWOT_L2_HR_Raster 100 meters dataset. 
+
+You can choose the passes you want to extract: change variable: passes_to_process = [68, 193, 374, 499, 221, 527, 249, 555]
+Change also the input and output directories
+This version call arcpy although the idea is to run the processes with QGIS. 
+WSE quality band will be added in the future.
+
+"""
+
+import os
+import re
+import arcpy
+
+# Enable overwriting output
+arcpy.env.overwriteOutput = True
+# Prevent adding outputs to the map
+arcpy.env.addOutputsToMap = False
+
+# Define directories
+input_dir = r''
+base_output_dir = r''
+geotiff_output_dir = os.path.join(base_output_dir, 'geotiff')
+os.makedirs(geotiff_output_dir, exist_ok=True)
+
+# List of pass numbers to process (as integers). Only files with a matching pass will be processed.
+# For example, to process passes 249 and 402:
+passes_to_process = [68, 193, 374, 499, 221, 527, 249, 555]
+
+# Regular expression pattern to extract:
+# - UTM zone digits (e.g., "35" from "UTM35M")
+# - Cycle (e.g., "001")
+# - Pass (e.g., "249")
+# - Tile (e.g., "075F")
+# - Acquisition date (first 8 digits from "20230730T023724")
+# - Processing level (e.g., "PGC0", "PIC0", or "PIC2")
+pattern = re.compile(
+    r'^SWOT_L2_HR_Raster_100m_UTM(?P<utm_zone>\d{2})[A-Z]_.*?_'  # UTM zone part
+    r'(?P<cycle>\d{3})_(?P<pass>\d{3})_(?P<tile>\d{3}[A-Z])_'       # Cycle, Pass, Tile
+    r'(?P<acq_date>\d{8})T\d{6}_\d{8}T\d{6}_'                       # Acquisition date/time fields
+    r'(?P<proc_level>P[GI]C\d)_'                                    # Processing level
+)
+
+count = 0
+
+# Iterate over each file in the input directory
+for filename in os.listdir(input_dir):
+    # Process only files with .nc extension
+    if not filename.lower().endswith('.nc'):
+        continue
+
+    full_path = os.path.join(input_dir, filename)
+
+    # Extract information from the filename using the regex pattern
+    match = pattern.match(filename)
+    if not match:
+        print(f"Filename '{filename}' does not match expected pattern. Skipping...")
+        continue
+
+    utm_zone = match.group('utm_zone')       # e.g., "35"
+    cycle = match.group('cycle')             # e.g., "001"
+    pass_str = match.group('pass')           # e.g., "249"
+    tile = match.group('tile')               # e.g., "075F"
+    acq_date = match.group('acq_date')         # e.g., "20230730"
+    proc_level = match.group('proc_level')     # e.g., "PGC0", "PIC0", "PIC2"
+
+    # Convert extracted pass to integer and check if it is in the allowed list
+    try:
+        pass_num = int(pass_str)
+    except ValueError:
+        print(f"Cannot convert pass value '{pass_str}' to integer for file '{filename}'. Skipping...")
+        continue
+
+    if pass_num not in passes_to_process:
+        print(f"File '{filename}' has pass {pass_num} which is not in the list {passes_to_process}. Skipping...")
+        continue
+
+    # Create the processing level subfolder within the geotiff output directory
+    proc_folder = os.path.join(geotiff_output_dir, proc_level)
+    os.makedirs(proc_folder, exist_ok=True)
+
+    # Determine EPSG code for southern hemisphere UTM (EPSG = 32700 + zone number)
+    try:
+        zone_number = int(utm_zone)
+    except ValueError:
+        print(f"Invalid UTM zone in file '{filename}'. Skipping...")
+        continue
+    epsg_code = 32700 + zone_number
+    spatial_ref = arcpy.SpatialReference(epsg_code)
+
+    # Construct the output GeoTIFF file name.
+    # Use the full input file name (without extension) and append "_wse.tif" to ensure uniqueness.
+    base_name = os.path.splitext(filename)[0]
+    out_tif = os.path.join(proc_folder, f"{base_name}_wse.tif")
+
+    # Create a unique temporary layer name
+    temp_layer = f"temp_layer_{count}"
+
+    try:
+        # Create the netCDF raster layer using variable "wse" and dimensions "x" and "y"
+        arcpy.md.MakeNetCDFRasterLayer(
+            full_path,   # Input netCDF file
+            "wse",       # Variable to convert (case-sensitive)
+            "x",         # X dimension (adjust if necessary)
+            "y",         # Y dimension (adjust if necessary)
+            temp_layer   # Output raster layer name
+        )
+    except Exception as e:
+        print(f"Error creating netCDF raster layer for file '{filename}': {e}")
+        continue
+
+    try:
+        # Define the projection on the temporary layer
+        arcpy.DefineProjection_management(temp_layer, spatial_ref)
+
+        # Export the temporary layer to a GeoTIFF file
+        arcpy.CopyRaster_management(temp_layer, out_tif, format="TIFF")
+
+        print(f"Processed '{filename}': exported '{out_tif}' with EPSG:{epsg_code}")
+        count += 1
+    except Exception as e:
+        print(f"Error during projection/export for file '{filename}': {e}")
+
+print(f"Conversion complete. {count} files processed.")
+
