@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 help_message = """
 Download products from your hydroweb.next projects (https://hydroweb.next.theia-land.fr) using the py-hydroweb lib (https://pypi.org/project/py-hydroweb/)
 This script is an example tuned for your last hydroweb.next project but feel free to adapt it for future requests.
