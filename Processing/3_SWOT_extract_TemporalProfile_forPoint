@@ -1,0 +1,74 @@
+import os
+import arcpy
+import csv
+
+# Folder containing the mosaic raster files (all in one folder)
+mosaic_folder = r'C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff\mosaic'
+
+# Output CSV folder and file
+output_csv_folder = r'C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff\TempProfile'
+os.makedirs(output_csv_folder, exist_ok=True)
+output_csv = os.path.join(output_csv_folder, 'temporal_profile.csv')
+
+# Define the point coordinates (UTM, southern hemisphere) for which you want the temporal profile.
+# Replace these with valid coordinates (easting, northing) that fall within your raster extent.
+x_coord = 232000.0  # Example value (e.g., near Lake Kivu)
+y_coord = 982000.0  # Example value
+
+# List to hold the temporal profile records: (date string, water height)
+profile = []
+
+# Loop through all files in the mosaic folder
+for fname in os.listdir(mosaic_folder):
+    if not fname.lower().endswith('.tif'):
+        continue
+
+    # Use string splitting to extract parts.
+    # Expected filename structure (example):
+    # mosaic_SWOT_L2_HR_Raster_100m_UTM35M_N_x_x_x_009_249_075F_202401_PGC0_01_wse.tif
+    parts = fname.split('_')
+    # We expect at least 5 parts from the end:
+    #   parts[-4] should be the 6-digit date (YYYYMM)
+    #   parts[-3] is the processing level (e.g., PGC0)
+    if len(parts) < 5:
+        print(f"Filename '{fname}' does not have enough parts. Skipping...")
+        continue
+
+    acq_date_field = parts[-4]
+    if len(acq_date_field) != 6 or not acq_date_field.isdigit():
+        print(f"Filename '{fname}' does not contain a valid 6-digit date in the expected position. Skipping...")
+        continue
+
+    # Format the date as "YYYY-MM"
+    year = acq_date_field[:4]
+    month = acq_date_field[4:6]
+    date_str = f"{year}-{month}"
+
+    raster_path = os.path.join(mosaic_folder, fname)
+    
+    try:
+        # Create an ArcPy Raster object from the file
+        raster = arcpy.Raster(raster_path)
+        # (For debugging, you could print the raster extent)
+        # print("Raster extent:", raster.extent)
+        # Extract the water height value at the specified point.
+        # The GetCellValue tool expects a string "x y".
+        result = arcpy.GetCellValue_management(raster, f"{x_coord} {y_coord}")
+        value = result.getOutput(0)
+    except Exception as e:
+        print(f"Error processing {fname}: {e}")
+        continue
+
+    profile.append((date_str, value))
+    print(f"Date: {date_str}, Water Height: {value}")
+
+# Write the temporal profile to CSV
+try:
+    with open(output_csv, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["Date", "Water Height"])
+        for rec in profile:
+            writer.writerow(rec)
+    print(f"Temporal profile written to {output_csv}")
+except Exception as e:
+    print(f"Error writing CSV: {e}")
