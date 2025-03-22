@@ -1,0 +1,165 @@
+import arcpy
+import os
+import re
+import glob
+import csv
+import pandas as pd
+import matplotlib.pyplot as plt
+import datetime
+
+def log(message):
+    print(message)
+    arcpy.AddMessage(message)
+
+def main():
+    # Define folder paths and filenames.
+    base_folder = r"C:\Users\ibana\Desktop\deleteme"
+    polygon_shp = os.path.join(base_folder, "targetShape.shp")
+    random_points_shp = os.path.join(base_folder, "randomPoints.shp")
+    joined_points_shp = os.path.join(base_folder, "randomPoints_joined.shp")
+    
+    # Folder where the raster files are stored.
+    raster_folder = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff_sel\mosaic"
+    
+    # Create (if not exists) the output folder for the CSV and PNG.
+    output_profile_folder = os.path.join(base_folder, "profile")
+    if not os.path.exists(output_profile_folder):
+        os.makedirs(output_profile_folder)
+        
+    csv_output_path = os.path.join(output_profile_folder, "temporal_profile.csv")
+    plot_output_path = os.path.join(output_profile_folder, "profile_plot.png")
+    
+    # Remove preexisting CSV or PNG files if they exist.
+    if os.path.exists(csv_output_path):
+        os.remove(csv_output_path)
+    if os.path.exists(plot_output_path):
+        os.remove(plot_output_path)
+    
+    log("Starting processing...")
+
+    # ----------------------------------------------------------------------------
+    # Step 1. Create 500 random points inside the polygon.
+    # ----------------------------------------------------------------------------
+    log("Step 1: Creating 500 random points within the polygon...")
+    if arcpy.Exists(random_points_shp):
+        arcpy.Delete_management(random_points_shp)
+    
+    arcpy.management.CreateRandomPoints(out_path=base_folder,
+                                        out_name="randomPoints.shp",
+                                        constraining_feature_class=polygon_shp,
+                                        number_of_points_or_field="500")
+    log("Random points created.")
+
+    # ----------------------------------------------------------------------------
+    # Step 2. Spatial Join: Inherit polygon attributes.
+    # ----------------------------------------------------------------------------
+    log("Step 2: Performing spatial join to inherit polygon attributes...")
+    if arcpy.Exists(joined_points_shp):
+        arcpy.Delete_management(joined_points_shp)
+    
+    # Use the "WITHIN" match option since points fall within the polygon.
+    arcpy.analysis.SpatialJoin(target_features=random_points_shp,
+                               join_features=polygon_shp,
+                               out_feature_class=joined_points_shp,
+                               join_operation="JOIN_ONE_TO_ONE",
+                               match_option="WITHIN")
+    log("Spatial join completed.")
+
+    # ----------------------------------------------------------------------------
+    # Step 3. Extract raster values at each point for all raster files.
+    # ----------------------------------------------------------------------------
+    log("Step 3: Extracting raster values from raster files...")
+    csv_rows = []
+    header = ["PointID", "X", "Y", "RasterValue", "Date", "ProcessingLevel"]
+    
+    raster_files = glob.glob(os.path.join(raster_folder, "*.tif"))
+    if not raster_files:
+        log("ERROR: No raster files found in folder: " + raster_folder)
+        return
+
+    # Regex pattern for extracting date (YYYYMM) and processing level (e.g., PIC0_04).
+    pattern = re.compile(r".*_(\d{6})_(PIC\d+_\d+)_.*\.tif$", re.IGNORECASE)
+    
+    # Read the points from the joined shapefile.
+    points = []
+    with arcpy.da.SearchCursor(joined_points_shp, ["OID@", "SHAPE@XY"]) as cursor:
+        for row in cursor:
+            points.append({"id": row[0], "x": row[1][0], "y": row[1][1]})
+    
+    total_rasters = len(raster_files)
+    start_time = datetime.datetime.now()
+    arcpy.SetProgressor("step", "Extracting raster values...", 0, total_rasters, 1)
+    
+    for i, raster_path in enumerate(raster_files, start=1):
+        basename = os.path.basename(raster_path)
+        match = pattern.match(basename)
+        if not match:
+            log("WARNING: Filename does not match pattern: " + basename)
+            continue
+        date_str = match.group(1)
+        proc_level = match.group(2)
+        
+        # Calculate elapsed time and estimated remaining time.
+        current_time = datetime.datetime.now()
+        elapsed = current_time - start_time
+        avg_time_per_raster = elapsed / i
+        estimated_total = avg_time_per_raster * total_rasters
+        remaining = estimated_total - elapsed
+        
+        log(f"Processing raster {i}/{total_rasters}: {basename} | Elapsed: {elapsed} | Est. remaining: {remaining}")
+        
+        for pt in points:
+            coords_str = f"{pt['x']} {pt['y']}"
+            try:
+                result = arcpy.GetCellValue_management(raster_path, coords_str)
+                value = float(result.getOutput(0))
+            except Exception:
+                value = None
+            csv_rows.append([pt["id"], pt["x"], pt["y"], value, date_str, proc_level])
+        
+        arcpy.SetProgressorPosition(i)
+    
+    arcpy.ResetProgressor()
+    log("Raster value extraction completed.")
+
+    # ----------------------------------------------------------------------------
+    # Step 4. Write the CSV file.
+    # ----------------------------------------------------------------------------
+    log("Step 4: Writing CSV file with extracted values...")
+    with open(csv_output_path, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        writer.writerows(csv_rows)
+    log("CSV file written: " + csv_output_path)
+    
+    # ----------------------------------------------------------------------------
+    # Step 5. Plot the temporal profiles.
+    # ----------------------------------------------------------------------------
+    log("Step 5: Plotting temporal profiles...")
+    df = pd.DataFrame(csv_rows, columns=header)
+    df["Date"] = pd.to_datetime(df["Date"], format="%Y%m")
+    df.sort_values("Date", inplace=True)
+    
+    plt.figure(figsize=(10, 6))
+    # Plot each point's temporal profile (blue with transparency).
+    for pt_id, group in df.groupby("PointID"):
+        plt.plot(group["Date"], group["RasterValue"], color="blue", alpha=0.3)
+    
+    # Calculate and plot the monthly average.
+    monthly_avg = df.groupby("Date")["RasterValue"].mean()
+    plt.plot(monthly_avg.index, monthly_avg.values, color="black", linewidth=2, label="Monthly Average")
+    
+    plt.xlabel("Time")
+    plt.ylabel("Raster Value")
+    plt.title("Temporal Profiles at Random Points")
+    plt.legend()
+    plt.tight_layout()
+    
+    plt.savefig(plot_output_path)
+    plt.close()
+    log("Plot saved: " + plot_output_path)
+    
+    log("Processing complete. CSV and plot saved in: " + output_profile_folder)
+
+if __name__ == '__main__':
+    main()
