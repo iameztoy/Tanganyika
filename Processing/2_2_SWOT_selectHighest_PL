@@ -12,8 +12,8 @@ import shutil
 
 def main():
     # Directorios de entrada y salida (ajusta las rutas según corresponda)
-    input_dir = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff"
-    output_dir = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff_sel"
+    input_dir = r"" # Add your own path
+    output_dir = r"" #Add your own path
 
     # Subcarpetas a procesar
     subfolders = ["PGC0", "PIC0", "PIC2"]
