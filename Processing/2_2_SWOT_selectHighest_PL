@@ -1,7 +1,9 @@
 #!/usr/bin/python
 
 """
-For certain images acquired in the same date, there are more than one processing levels. The idea of this script is to select (copy and paste to a different folder structure)
+For certain images acquired in the same date, there are more than one processing levels. See for example PIC0, PIC1, PIC2 and PIC3
+
+The idea of this script is to select (copy and paste to a different folder structure)
 only the highest processing level i.e. the one with the latest algorithm enhancements. 
 
 """
