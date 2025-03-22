@@ -1,0 +1,78 @@
+import os
+import re
+import shutil
+
+def main():
+    # Directorios de entrada y salida (ajusta las rutas según corresponda)
+    input_dir = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff"
+    output_dir = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff_sel"
+
+    # Subcarpetas a procesar
+    subfolders = ["PGC0", "PIC0", "PIC2"]
+
+    # Crea la carpeta de salida y sus subcarpetas si no existen
+    for sub in subfolders:
+        os.makedirs(os.path.join(output_dir, sub), exist_ok=True)
+
+    # Expresión regular para capturar el nombre base y el nivel de procesamiento.
+    # Se espera que el nombre del archivo sea algo como:
+    # ..._PIC0_01_wse.tif
+    # De modo que se extrae:
+    #   grupo(1): todo antes de _<nivel>_wse
+    #   grupo(2): el número de procesamiento (por ejemplo, "01")
+    pattern = re.compile(r"^(.*)_(\d{2})_wse$", re.IGNORECASE)
+
+    # Procesa cada subcarpeta
+    for sub in subfolders:
+        sub_input = os.path.join(input_dir, sub)
+        print(f"Procesando la carpeta: {sub_input}")
+
+        # Lista de archivos con extensión .tif (se asume que son los ficheros principales)
+        tif_files = [f for f in os.listdir(sub_input) if f.lower().endswith(".tif")]
+
+        # Diccionario para agrupar archivos por nombre base
+        groups = {}
+        for tif in tif_files:
+            # Nombre sin extensión
+            name_without_ext = os.path.splitext(tif)[0]
+            match = pattern.match(name_without_ext)
+            if match:
+                base = match.group(1)  # Nombre base sin el indicador de nivel
+                proc_level = int(match.group(2))
+            else:
+                # Si no cumple con el patrón, se utiliza el nombre completo
+                base = name_without_ext
+                proc_level = -1  # Se asigna un valor bajo para que, en caso de duplicado, se escoja otro
+            groups.setdefault(base, []).append((tif, proc_level))
+
+        # Para cada grupo se selecciona el archivo con el mayor nivel de procesamiento
+        for base, file_list in groups.items():
+            best_file, best_level = max(file_list, key=lambda x: x[1])
+            print(f"Para el grupo [{base}] se selecciona {best_file} (nivel {best_level:02d})")
+
+            # Se define el nombre del archivo TFW correspondiente
+            best_file_tfw = os.path.splitext(best_file)[0] + ".tfw"
+
+            # Rutas de origen
+            src_tif = os.path.join(sub_input, best_file)
+            src_tfw = os.path.join(sub_input, best_file_tfw)
+            # Rutas de destino en la subcarpeta correspondiente
+            dest_tif = os.path.join(output_dir, sub, best_file)
+            dest_tfw = os.path.join(output_dir, sub, best_file_tfw)
+
+            # Copia el archivo TIFF
+            shutil.copy2(src_tif, dest_tif)
+            # Copia el archivo TFW si existe, sino se informa
+            if os.path.exists(src_tfw):
+                shutil.copy2(src_tfw, dest_tfw)
+            else:
+                print(f"  ¡Atención! No se encontró el archivo TFW para: {src_tif}")
+
+    print("Proceso completado.")
+
+if __name__ == '__main__':
+    main()
+
+
+# Final message indicating the job is complete
+print("Job completed successfully. All selected files have been copied to the _sel folders.")
