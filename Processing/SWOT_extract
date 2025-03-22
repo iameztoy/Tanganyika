@@ -1,14 +1,3 @@
-"""
-Extract wse band from a set of .nc files downloaded from https://podaac.jpl.nasa.gov and convert to geotiff
-Target: SWOT_L2_HR_Raster 100 meters dataset. 
-
-You can choose the passes you want to extract: change variable: passes_to_process = [68, 193, 374, 499, 221, 527, 249, 555]
-Change also the input and output directories
-This version call arcpy although the idea is to run the processes with QGIS. 
-WSE quality band will be added in the future.
-
-"""
-
 import os
 import re
 import arcpy
