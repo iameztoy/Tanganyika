@@ -4,7 +4,7 @@ import re
 import arcpy
 
 # Base folder for the GeoTIFF outputs from the conversion step
-geotiff_base = r'C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff'
+geotiff_base = r'' # Add your path here
 # The mosaic outputs will be stored together in a "mosaic" folder inside geotiff_base.
 mosaic_folder = os.path.join(geotiff_base, 'mosaic')
 os.makedirs(mosaic_folder, exist_ok=True)
