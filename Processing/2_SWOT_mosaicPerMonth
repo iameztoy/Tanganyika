@@ -1,0 +1,96 @@
+import os
+import re
+import arcpy
+
+# Base folder for the GeoTIFF outputs from the conversion step
+geotiff_base = r'C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff'
+# The mosaic outputs will be stored together in a "mosaic" folder inside geotiff_base.
+mosaic_folder = os.path.join(geotiff_base, 'mosaic')
+os.makedirs(mosaic_folder, exist_ok=True)
+
+# Define the processing level subfolders to look for.
+proc_levels = ['PGC0', 'PIC0', 'PIC2']
+
+# Regex pattern to extract the acquisition date and processing level from the filename.
+# It expects filenames (without extension) in the following form:
+# SWOT_L2_HR_Raster_100m_UTM35M_N_x_x_x_001_249_075F_20230730T023724_20230730T023745_PGC0_01_wse
+# where the first date block is used to extract the month.
+pattern_mosaic = re.compile(
+    r'^.*_(?P<acq_date>\d{8})T\d{6}_\d{8}T\d{6}_(?P<proc_level>P[GI]C\d)_.*_wse$', 
+    re.IGNORECASE
+)
+
+# This regex is used to replace the two full date strings with the month string.
+# It matches: _YYYYMMDDT******_YYYYMMDDT******_
+pattern_dates = re.compile(r'_\d{8}T\d{6}_\d{8}T\d{6}_')
+
+count = 0
+
+# Process each processing level folder (PGC0, PIC0, PIC2)
+for proc_level in proc_levels:
+    input_folder = os.path.join(geotiff_base, proc_level)
+    if not os.path.exists(input_folder):
+        print(f"Folder {input_folder} not found. Skipping processing level {proc_level}.")
+        continue
+
+    # Dictionary to group files by (year, month)
+    groups = {}
+
+    # Process each GeoTIFF in the current processing level folder
+    for fname in os.listdir(input_folder):
+        if not fname.lower().endswith('.tif'):
+            continue
+        base_fname = os.path.splitext(fname)[0]
+        m = pattern_mosaic.match(base_fname)
+        if not m:
+            print(f"Filename '{fname}' does not match expected pattern for mosaicking. Skipping...")
+            continue
+
+        # Extract the acquisition date (YYYYMMDD) and derive year and month
+        acq_date = m.group('acq_date')  # e.g., "20230730"
+        year = acq_date[:4]
+        month = acq_date[4:6]
+        group_key = (year, month)
+
+        # Add full path of the file to the group
+        groups.setdefault(group_key, []).append(os.path.join(input_folder, fname))
+
+    # For each group (by year and month), mosaic the files
+    for (year, month), file_list in groups.items():
+        if not file_list:
+            continue
+
+        # Use the first file of the group as a representative name.
+        rep_file = file_list[0]
+        rep_base = os.path.splitext(os.path.basename(rep_file))[0]
+        # Replace the date block with _YYYYMM_ (e.g., _202307_)
+        new_base = pattern_dates.sub(f'_{year}{month}_', rep_base)
+        # Ensure the new base name ends with _wse (if not already) and add the mosaic prefix.
+        if not new_base.endswith("_wse"):
+            new_base += "_wse"
+        # Prepend "mosaic_" to indicate that this file is a mosaic output.
+        output_raster_name = f"mosaic_{new_base}.tif"
+        output_raster_path = os.path.join(mosaic_folder, output_raster_name)
+
+        # Create a semicolon-separated list of input rasters
+        input_rasters = ";".join(file_list)
+
+        # Perform the mosaic operation using the MEAN mosaic operator and 32-bit floating point pixel type.
+        try:
+            arcpy.MosaicToNewRaster_management(
+                input_rasters,            # Input rasters as a semicolon-separated string
+                mosaic_folder,            # Output location (single mosaic folder)
+                output_raster_name,       # Output raster dataset name
+                "",                       # Coordinate system (empty uses first raster's)
+                "32_BIT_FLOAT",           # Pixel type: 32-bit floating point
+                "",                       # Cell size (empty uses default)
+                1,                        # Number of bands
+                "MEAN",                   # Mosaic method: average overlapping pixels
+                "MATCH"                   # Mosaic colormap mode
+            )
+            print(f"Mosaicked {len(file_list)} files for {proc_level} {year}-{month} into {output_raster_path}")
+            count += 1
+        except Exception as e:
+            print(f"Error mosaicking files for {proc_level} {year}-{month}: {e}")
+
+print(f"Mosaicking complete. {count} mosaic rasters created.")
