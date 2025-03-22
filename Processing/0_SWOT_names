@@ -1,0 +1,59 @@
+import os
+import pandas as pd
+import re
+
+# Define the input and output directories
+input_folder = r""
+output_folder = r""
+output_csv = os.path.join(output_folder, "parsed_files.csv")
+
+# List to hold file data
+data = []
+
+# Process each file in the input folder
+for file in os.listdir(input_folder):
+    file_path = os.path.join(input_folder, file)
+    # Ensure we process only files (ignore directories)
+    if os.path.isfile(file_path):
+        # Remove file extension if it exists
+        file_name = os.path.splitext(file)[0]
+        # Split the file name by underscore
+        parts = file_name.split('_')
+        
+        # Check if the file name follows the expected naming format
+        # Example file: SWOT_L2_HR_Raster_100m_UTM35M_N_x_x_x_001_249_075F_20230730T023724_20230730T023745_PGC0_01
+        # Expected parts indices:
+        #   0-4: product components --> "SWOT_L2_HR_Raster_100m"
+        #   5: UTM zone --> "UTM35M"
+        #   10: Cycle --> "001"
+        #   11: Pass --> "249"
+        #   12: Tile --> "075F"
+        #   13: Contains Date ("20230730T023724") -> take first 8 digits "20230730"
+        if len(parts) < 14:
+            print(f"Skipping file {file} due to unexpected naming format.")
+            continue
+
+        # Construct the columns as specified
+        product = "_".join(parts[0:5])
+        utm_zone = parts[5]
+        # Extract numeric part from the UTM zone string
+        only_zone = re.sub(r"[^0-9]", "", utm_zone)
+        cycle = parts[10]
+        pass_value = parts[11]
+        tile = parts[12]
+        date = parts[13][:8]  # First 8 digits from the date-time part
+
+        data.append({
+            "Product": product,
+            "UTM_Zone": utm_zone,
+            "Only_zone": only_zone,
+            "Cycle": cycle,
+            "Pass": pass_value,
+            "Tile": tile,
+            "Date": date
+        })
+
+# Create a DataFrame and export it to CSV
+df = pd.DataFrame(data)
+df.to_csv(output_csv, index=False)
+print(f"CSV file saved to: {output_csv}")
