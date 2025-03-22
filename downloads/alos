@@ -3,7 +3,7 @@
 Usage:
 
 ---- This is a modified version of the original py file generated via https://search.asf.alaska.edu/
-      it includes a custom path for downloading files + it integrates the tqdm library for download % check:
+      it includes a custom path (modify line 267) for downloading files + it integrates the tqdm library for download % check:
       This may require some fine tunning. You should add the url list + the target path where files will be stored ---
 
 In a terminal/command line, cd to the directory where this file lives. Then...
@@ -264,7 +264,7 @@ class bulk_downloader:
         return False
 
     def download_file_with_cookiejar(self, url, file_count, total, recursion=False):
-        download_dir = r"C:\Users\ibana\Desktop\deleteme\downloads"
+        download_dir = r"" #Add path here
         if not os.path.exists(download_dir):
             os.makedirs(download_dir)
         download_file = os.path.join(download_dir, os.path.basename(url).split('?')[0])
