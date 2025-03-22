@@ -6,6 +6,9 @@ For certain images acquired in the same date, there are more than one processing
 The idea of this script is to select (copy and paste to a different folder structure)
 only the highest processing level i.e. the one with the latest algorithm enhancements. 
 
+Ideally, this should be done before 1_SWOT_extract but the script would need to be changed to process .nc files instead of tiff. 
+Consider that at that stage, files are not separated in different sub-folders.
+
 """
 
 import os
