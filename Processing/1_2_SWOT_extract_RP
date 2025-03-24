@@ -32,6 +32,9 @@ os.makedirs(geotiff_output_dir, exist_ok=True)
 
 # List of pass numbers to process (as integers). Only files with a matching pass will be processed.
 # For example, to process passes 124 and 96:
+# Lake Passes [96, 124, 221, 249, 402, 527, 555]
+# Basin Passes [68, 96, 124, 193, 221, 249, 374, 402, 430, 499, 527, 555]
+
 passes_to_process = [124, 96]
 
 # Regular expression pattern to extract metadata from the filename
