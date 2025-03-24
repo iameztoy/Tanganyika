@@ -2,57 +2,103 @@
 
 import os
 import sys
+import re
 import arcpy
 from arcpy.sa import Con
+from arcpy import Raster
+
+# Enable overwriting output and prevent outputs from being added to the map view
+arcpy.env.overwriteOutput = True
+arcpy.env.addOutputsToMap = False
 
 # Check out the Spatial Analyst extension
 arcpy.CheckOutExtension("Spatial")
 
-# Define the threshold for wse_qual
+# -------------------------------
+# USER-DEFINED PARAMETERS
+# -------------------------------
+# Define the list of passes to process (e.g. [374]). Only files with a pass number in this list will be masked.
+passes_to_process = [374]
+
+# Define threshold for quality (we want to keep pixels where wse_qual < threshold)
 threshold = 2
 
-# Define the extraction-phase output folder (the one with subfolders PGC0, PIC0, PIC2)
-extraction_dir = r'C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff'
+# Define input folder (the extraction phase output stored in geotiff_sel)
+input_folder = r'C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff_sel'
 
-# Create the masked output folder. Its name includes the threshold (e.g., "masked_lt2")
-masked_dir = os.path.join(os.path.dirname(extraction_dir), f"masked_lt{threshold}")
-os.makedirs(masked_dir, exist_ok=True)
+# Create output folder with threshold in its name, e.g. "masked_lt2"
+masked_folder_name = f"masked_lt{threshold}"
+output_folder = os.path.join(input_folder, masked_folder_name)
 
-# List of subfolder names (the processing levels)
+# Define the processing-level subfolders that exist in the extraction phase
 subfolders = ["PGC0", "PIC0", "PIC2"]
 
+# Create the main output folder and its subfolders if they don't already exist
+if not os.path.exists(output_folder):
+    os.makedirs(output_folder)
+for sub in subfolders:
+    out_sub = os.path.join(output_folder, sub)
+    if not os.path.exists(out_sub):
+        os.makedirs(out_sub)
+
+# Regular expression pattern to extract the pass number from the file name.
+# This pattern expects the file name format:
+# SWOT_L2_HR_Raster_100m_UTM??[A-Z]_..._CCC_PPP_TTT... where PPP is the 3-digit pass number.
+pass_pattern = re.compile(r'^SWOT_L2_HR_Raster_100m_UTM\d{2}[A-Z]_.*?_\d{3}_(?P<pass>\d{3})_')
+
+# Count total number of files to process after filtering by pass number
+total_files = 0
+files_by_subfolder = {}
+for sub in subfolders:
+    sub_in = os.path.join(input_folder, sub)
+    files = [f for f in os.listdir(sub_in) if f.lower().endswith('.tif')]
+    # Filter files based on the pass number
+    valid_files = []
+    for f in files:
+        m = pass_pattern.match(f)
+        if m:
+            try:
+                pass_num = int(m.group('pass'))
+            except ValueError:
+                continue
+            if pass_num in passes_to_process:
+                valid_files.append(f)
+    files_by_subfolder[sub] = valid_files
+    total_files += len(valid_files)
+
+print(f"Starting masking process for {total_files} files using threshold < {threshold}")
+sys.stdout.flush()
+
+current_count = 0
+
 # Process each subfolder
-for subfolder in subfolders:
-    input_subfolder = os.path.join(extraction_dir, subfolder)
-    output_subfolder = os.path.join(masked_dir, subfolder)
-    os.makedirs(output_subfolder, exist_ok=True)
-    
-    # Get a list of GeoTIFF files in the subfolder
-    files = [f for f in os.listdir(input_subfolder) if f.lower().endswith('.tif')]
-    total_files = len(files)
-    
-    for idx, filename in enumerate(files, start=1):
-        print(f"Processing {filename} ({idx}/{total_files}) in {subfolder}")
-        sys.stdout.flush()
-        input_file = os.path.join(input_subfolder, filename)
+for sub in subfolders:
+    sub_in = os.path.join(input_folder, sub)
+    sub_out = os.path.join(output_folder, sub)
+    for f in files_by_subfolder[sub]:
+        current_count += 1
+        input_file = os.path.join(sub_in, f)
+        base_name = os.path.splitext(f)[0]
+        # Append threshold information to the output file name
+        output_file = os.path.join(sub_out, f"{base_name}_masked_lt{threshold}.tif")
         
-        # Extract the two bands from the multiband GeoTIFF.
-        # In ArcGIS you can reference individual bands with the "/Band_x" notation.
-        wse = arcpy.Raster(f"{input_file}/Band_1")
-        wse_qual = arcpy.Raster(f"{input_file}/Band_2")
-        
-        # Apply the mask: if wse_qual < 2 then retain the wse value; otherwise, set NoData.
-        masked_wse = Con(wse_qual < threshold, wse)
-        
-        # Build the output filename, adding a suffix to indicate masked and threshold used.
-        base_name = os.path.splitext(filename)[0]
-        output_file = os.path.join(output_subfolder, f"{base_name}_masked_lt{threshold}.tif")
-        
-        # Save the masked raster (which contains only the wse band)
-        masked_wse.save(output_file)
-        print(f"Saved masked file: {output_file}")
+        print(f"Processing file {current_count} of {total_files}: {f}")
         sys.stdout.flush()
 
-arcpy.CheckInExtension("Spatial")
-print("Masking process complete.")
-sys.stdout.flush()
+        # Create temporary raster layers for band extraction (band 1: wse, band 2: wse_qual)
+        wse_layer = "wse_temp_layer"
+        wse_qual_layer = "wse_qual_temp_layer"
+        try:
+            arcpy.management.MakeRasterLayer(input_file, wse_layer, "", "", "1")
+            arcpy.management.MakeRasterLayer(input_file, wse_qual_layer, "", "", "2")
+        except Exception as e:
+            print(f"Error creating raster layers for {f}: {e}")
+            continue
+        
+        try:
+            # Apply mask: if wse_qual < threshold, retain wse; otherwise output NoData.
+            masked_raster = Con(Raster(wse_qual_layer) < threshold, Raster(wse_layer))
+            
+            # Save the masked raster (containing only the wse band) to the output file
+            masked_raster.save(output_file)
+            print(f"Saved masked raster to {output_file_
