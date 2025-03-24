@@ -1,0 +1,147 @@
+import os
+import re
+import arcpy
+
+# Enable overwriting output and prevent outputs from being added to the map view
+arcpy.env.overwriteOutput = True
+arcpy.env.addOutputsToMap = False
+
+# Set the resampling method. Options include "NEAREST", "BILINEAR", "CUBIC", etc.
+resampling_method = "NEAREST"
+
+# Define directories
+input_dir = r'C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\images'
+base_output_dir = r'C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output'
+geotiff_output_dir = os.path.join(base_output_dir, 'geotiff')
+os.makedirs(geotiff_output_dir, exist_ok=True)
+
+# List of pass numbers to process (as integers). Only files with a matching pass will be processed.
+# For example, to process passes 124 and 96:
+passes_to_process = [124, 96]
+
+# Regular expression pattern to extract metadata from the filename
+pattern = re.compile(
+    r'^SWOT_L2_HR_Raster_100m_UTM(?P<utm_zone>\d{2})[A-Z]_.*?_'  # UTM zone part
+    r'(?P<cycle>\d{3})_(?P<pass>\d{3})_(?P<tile>\d{3}[A-Z])_'       # Cycle, Pass, Tile
+    r'(?P<acq_date>\d{8})T\d{6}_\d{8}T\d{6}_'                       # Acquisition date/time fields
+    r'(?P<proc_level>P[GI]C\d)_'                                    # Processing level
+)
+
+count = 0
+
+# Define LAEA projection using a custom WKT.
+# Parameters are chosen to center the projection near Lake Tanganyika.
+laea_wkt = (
+    'PROJCS["LAEA_Tanganyika",'
+    'GEOGCS["GCS_WGS_1984",'
+        'DATUM["WGS_1984",'
+            'SPHEROID["WGS_1984",6378137.0,298.257223563]],'
+        'PRIMEM["Greenwich",0.0],'
+        'UNIT["Degree",0.0174532925199433]],'
+    'PROJECTION["Lambert_Azimuthal_Equal_Area"],'
+    'PARAMETER["False_Easting",0.0],'
+    'PARAMETER["False_Northing",0.0],'
+    'PARAMETER["Central_Meridian",29.5],'
+    'PARAMETER["Latitude_Of_Origin",-6.5],'
+    'UNIT["Meter",1.0]]'
+)
+laea_sr = arcpy.SpatialReference()
+laea_sr.loadFromString(laea_wkt)
+
+# Iterate over each file in the input directory
+for filename in os.listdir(input_dir):
+    # Process only files with .nc extension
+    if not filename.lower().endswith('.nc'):
+        continue
+
+    full_path = os.path.join(input_dir, filename)
+    match = pattern.match(filename)
+    if not match:
+        print(f"Filename '{filename}' does not match expected pattern. Skipping...")
+        continue
+
+    utm_zone = match.group('utm_zone')       # e.g., "35"
+    cycle = match.group('cycle')             # e.g., "001"
+    pass_str = match.group('pass')           # e.g., "124"
+    tile = match.group('tile')               # e.g., "075F"
+    acq_date = match.group('acq_date')         # e.g., "20230730"
+    proc_level = match.group('proc_level')     # e.g., "PGC0", "PIC0", "PIC2"
+
+    try:
+        pass_num = int(pass_str)
+    except ValueError:
+        print(f"Cannot convert pass value '{pass_str}' to integer for file '{filename}'. Skipping...")
+        continue
+
+    if pass_num not in passes_to_process:
+        print(f"File '{filename}' has pass {pass_num} which is not in the list {passes_to_process}. Skipping...")
+        continue
+
+    # Create the processing level subfolder within the geotiff output directory
+    proc_folder = os.path.join(geotiff_output_dir, proc_level)
+    os.makedirs(proc_folder, exist_ok=True)
+
+    # Determine EPSG code for southern hemisphere UTM (EPSG = 32700 + zone number)
+    try:
+        zone_number = int(utm_zone)
+    except ValueError:
+        print(f"Invalid UTM zone in file '{filename}'. Skipping...")
+        continue
+    epsg_code = 32700 + zone_number
+    spatial_ref = arcpy.SpatialReference(epsg_code)
+
+    base_name = os.path.splitext(filename)[0]
+    # Final output file will be reprojected to LAEA
+    projected_tif = os.path.join(proc_folder, f"{base_name}_wse_laea.tif")
+
+    # Create unique temporary layer names
+    temp_layer_wse = f"temp_layer_wse_{count}"
+    temp_layer_wse_qual = f"temp_layer_wse_qual_{count}"
+    composite_layer = f"composite_layer_{count}"
+
+    try:
+        # Create the netCDF raster layer for "wse"
+        arcpy.md.MakeNetCDFRasterLayer(
+            full_path,   # Input netCDF file
+            "wse",       # Variable to extract
+            "x",         # X dimension
+            "y",         # Y dimension
+            temp_layer_wse
+        )
+        # Create the netCDF raster layer for "wse_qual"
+        arcpy.md.MakeNetCDFRasterLayer(
+            full_path,
+            "wse_qual",  # Second variable to extract
+            "x",
+            "y",
+            temp_layer_wse_qual
+        )
+    except Exception as e:
+        print(f"Error creating netCDF raster layers for file '{filename}': {e}")
+        continue
+
+    try:
+        # Define the original projection on both temporary layers
+        arcpy.DefineProjection_management(temp_layer_wse, spatial_ref)
+        arcpy.DefineProjection_management(temp_layer_wse_qual, spatial_ref)
+
+        # Combine the two bands into a composite multiband raster.
+        arcpy.CompositeBands_management([temp_layer_wse, temp_layer_wse_qual], composite_layer)
+    except Exception as e:
+        print(f"Error during composite band creation for file '{filename}': {e}")
+        continue
+
+    try:
+        # Reproject the composite raster to the LAEA projection using the specified resampling method
+        arcpy.ProjectRaster_management(
+            composite_layer,   # Input composite raster
+            projected_tif,     # Output file
+            laea_sr,           # Target spatial reference (LAEA)
+            resampling_method  # Resampling/interpolation method
+        )
+        print(f"Processed '{filename}': exported '{projected_tif}' with LAEA projection using {resampling_method} resampling.")
+        count += 1
+    except Exception as e:
+        print(f"Error during projection/export for file '{filename}': {e}")
+
+print(f"Conversion complete. {count} files processed.")
