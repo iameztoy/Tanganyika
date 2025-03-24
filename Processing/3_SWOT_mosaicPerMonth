@@ -1,10 +1,11 @@
 #!/usr/bin/python
+
 import os
 import re
 import arcpy
 
 # Base folder for the GeoTIFF outputs from the conversion step
-geotiff_base = r'' # Add your path here
+geotiff_base = r'C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff_sel\masked_lt2'
 # The mosaic outputs will be stored together in a "mosaic" folder inside geotiff_base.
 mosaic_folder = os.path.join(geotiff_base, 'mosaic')
 os.makedirs(mosaic_folder, exist_ok=True)
@@ -17,7 +18,7 @@ proc_levels = ['PGC0', 'PIC0', 'PIC2']
 # SWOT_L2_HR_Raster_100m_UTM35M_N_x_x_x_001_249_075F_20230730T023724_20230730T023745_PGC0_01_wse
 # where the first date block is used to extract the month.
 pattern_mosaic = re.compile(
-    r'^.*_(?P<acq_date>\d{8})T\d{6}_\d{8}T\d{6}_(?P<proc_level>P[GI]C\d)_.*_wse$', 
+    r'^.*_(?P<acq_date>\d{8})T\d{6}_\d{8}T\d{6}_(?P<proc_level>P[GI]C\d)_.*_wse_laea_masked_lt2$', 
     re.IGNORECASE
 )
 
