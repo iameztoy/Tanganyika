@@ -32,9 +32,6 @@ os.makedirs(geotiff_output_dir, exist_ok=True)
 
 # List of pass numbers to process (as integers). Only files with a matching pass will be processed.
 # For example, to process passes 124 and 96:
-# Lake Passes [96, 124, 221, 249, 402, 527, 555]
-# Basin Passes [68, 96, 124, 193, 221, 249, 374, 402, 430, 499, 527, 555]
-
 passes_to_process = [124, 96]
 
 # Regular expression pattern to extract metadata from the filename
@@ -45,7 +42,28 @@ pattern = re.compile(
     r'(?P<proc_level>P[GI]C\d)_'                                    # Processing level
 )
 
-count = 0
+# First, build a list of files (and associated match objects) that meet the criteria.
+files_to_process = []
+for filename in os.listdir(input_dir):
+    if not filename.lower().endswith('.nc'):
+        continue
+    full_path = os.path.join(input_dir, filename)
+    match = pattern.match(filename)
+    if not match:
+        continue
+    try:
+        pass_num = int(match.group('pass'))
+    except ValueError:
+        continue
+    if pass_num not in passes_to_process:
+        continue
+    files_to_process.append((filename, match))
+
+total_files = len(files_to_process)
+print(f"Starting processing of {total_files} files.")
+
+# Temporary counter used for unique temporary layer names
+temp_count = 0
 
 # Define LAEA projection using a custom WKT.
 # Parameters are chosen to center the projection near Lake Tanganyika.
@@ -66,34 +84,18 @@ laea_wkt = (
 laea_sr = arcpy.SpatialReference()
 laea_sr.loadFromString(laea_wkt)
 
-# Iterate over each file in the input directory
-for filename in os.listdir(input_dir):
-    # Process only files with .nc extension
-    if not filename.lower().endswith('.nc'):
-        continue
-
+# Process each file while showing progress.
+for idx, (filename, match) in enumerate(files_to_process, start=1):
+    print(f"Processing file {idx} of {total_files} ({(idx/total_files)*100:.1f}%)")
     full_path = os.path.join(input_dir, filename)
-    match = pattern.match(filename)
-    if not match:
-        print(f"Filename '{filename}' does not match expected pattern. Skipping...")
-        continue
 
-    utm_zone = match.group('utm_zone')       # e.g., "35"
-    cycle = match.group('cycle')             # e.g., "001"
-    pass_str = match.group('pass')           # e.g., "124"
-    tile = match.group('tile')               # e.g., "075F"
-    acq_date = match.group('acq_date')         # e.g., "20230730"
-    proc_level = match.group('proc_level')     # e.g., "PGC0", "PIC0", "PIC2"
-
-    try:
-        pass_num = int(pass_str)
-    except ValueError:
-        print(f"Cannot convert pass value '{pass_str}' to integer for file '{filename}'. Skipping...")
-        continue
-
-    if pass_num not in passes_to_process:
-        print(f"File '{filename}' has pass {pass_num} which is not in the list {passes_to_process}. Skipping...")
-        continue
+    # Extract metadata from the filename
+    utm_zone = match.group('utm_zone')       
+    cycle = match.group('cycle')             
+    pass_str = match.group('pass')           
+    tile = match.group('tile')               
+    acq_date = match.group('acq_date')         
+    proc_level = match.group('proc_level')     
 
     # Create the processing level subfolder within the geotiff output directory
     proc_folder = os.path.join(geotiff_output_dir, proc_level)
@@ -113,9 +115,9 @@ for filename in os.listdir(input_dir):
     projected_tif = os.path.join(proc_folder, f"{base_name}_wse_laea.tif")
 
     # Create unique temporary layer names
-    temp_layer_wse = f"temp_layer_wse_{count}"
-    temp_layer_wse_qual = f"temp_layer_wse_qual_{count}"
-    composite_layer = f"composite_layer_{count}"
+    temp_layer_wse = f"temp_layer_wse_{temp_count}"
+    temp_layer_wse_qual = f"temp_layer_wse_qual_{temp_count}"
+    composite_layer = f"composite_layer_{temp_count}"
 
     try:
         # Create the netCDF raster layer for "wse"
@@ -158,8 +160,9 @@ for filename in os.listdir(input_dir):
             resampling_method  # Resampling/interpolation method
         )
         print(f"Processed '{filename}': exported '{projected_tif}' with LAEA projection using {resampling_method} resampling.")
-        count += 1
+        temp_count += 1
     except Exception as e:
         print(f"Error during projection/export for file '{filename}': {e}")
 
-print(f"Conversion complete. {count} files processed.")
+print(f"Conversion complete. {temp_count} files processed.")
+
