@@ -1,3 +1,19 @@
+"""
+
+This script automates the processing of SWOT netCDF raster files using ArcPy. It:
+
+Extracts Metadata: Reads filenames from a specified directory and uses a regular expression to extract metadata (e.g., UTM zone, cycle, pass, tile, acquisition date, and processing level).
+
+Filters Files: Processes only files with specific pass numbers.
+
+Creates Raster Layers: Extracts two bands ("wse" and "wse_qual") from the netCDF files and combines them into a composite multiband raster.
+
+Custom Projection & Resampling: Reprojects the composite raster to a custom Lambert Azimuthal Equal-Area (LAEA) projection centered near Lake Tanganyika, using a user-defined resampling method.
+
+"""
+
+
+#!/usr/bin/python
 import os
 import re
 import arcpy
