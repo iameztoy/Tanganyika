@@ -15,6 +15,7 @@ Custom Projection & Resampling: Reprojects the composite raster to a custom Lamb
 
 import os
 import re
+import sys
 import arcpy
 
 # Enable overwriting output and prevent outputs from being added to the map view
@@ -36,8 +37,6 @@ os.makedirs(geotiff_output_dir, exist_ok=True)
 # Lake Passes [96, 124, 221, 249, 402, 527, 555]
 # Basin Passes [68, 96, 124, 193, 221, 249, 374, 402, 430, 499, 527, 555]
 
-passes_to_process = [96, 221, 249, 402, 527, 555]
-
 # Regular expression pattern to extract metadata from the filename
 pattern = re.compile(
     r'^SWOT_L2_HR_Raster_100m_UTM(?P<utm_zone>\d{2})[A-Z]_.*?_'  # UTM zone part
@@ -46,7 +45,7 @@ pattern = re.compile(
     r'(?P<proc_level>P[GI]C\d)_'                                    # Processing level
 )
 
-# First, build a list of files (and associated match objects) that meet the criteria.
+# Build a list of files (and associated match objects) that meet the criteria
 files_to_process = []
 for filename in os.listdir(input_dir):
     if not filename.lower().endswith('.nc'):
@@ -65,6 +64,7 @@ for filename in os.listdir(input_dir):
 
 total_files = len(files_to_process)
 print(f"Starting processing of {total_files} files.")
+sys.stdout.flush()
 
 # Temporary counter used for unique temporary layer names
 temp_count = 0
@@ -91,15 +91,16 @@ laea_sr.loadFromString(laea_wkt)
 # Process each file while showing progress.
 for idx, (filename, match) in enumerate(files_to_process, start=1):
     print(f"Processing file {idx} of {total_files} ({(idx/total_files)*100:.1f}%)")
+    sys.stdout.flush()  # Flush output immediately
     full_path = os.path.join(input_dir, filename)
 
     # Extract metadata from the filename
-    utm_zone = match.group('utm_zone')       
-    cycle = match.group('cycle')             
-    pass_str = match.group('pass')           
-    tile = match.group('tile')               
-    acq_date = match.group('acq_date')         
-    proc_level = match.group('proc_level')     
+    utm_zone = match.group('utm_zone')
+    cycle = match.group('cycle')
+    pass_str = match.group('pass')
+    tile = match.group('tile')
+    acq_date = match.group('acq_date')
+    proc_level = match.group('proc_level')
 
     # Create the processing level subfolder within the geotiff output directory
     proc_folder = os.path.join(geotiff_output_dir, proc_level)
@@ -169,4 +170,4 @@ for idx, (filename, match) in enumerate(files_to_process, start=1):
         print(f"Error during projection/export for file '{filename}': {e}")
 
 print(f"Conversion complete. {temp_count} files processed.")
-
+sys.stdout.flush()
