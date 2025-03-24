@@ -1,0 +1,56 @@
+import os
+import sys
+import arcpy
+from arcpy.sa import Con
+
+# Check out the Spatial Analyst extension
+arcpy.CheckOutExtension("Spatial")
+
+# Define the threshold for wse_qual
+threshold = 2
+
+# Define the extraction-phase output folder (the one with subfolders PGC0, PIC0, PIC2)
+extraction_dir = r'C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff'
+
+# Create the masked output folder. Its name includes the threshold (e.g., "masked_lt2")
+masked_dir = os.path.join(os.path.dirname(extraction_dir), f"masked_lt{threshold}")
+os.makedirs(masked_dir, exist_ok=True)
+
+# List of subfolder names (the processing levels)
+subfolders = ["PGC0", "PIC0", "PIC2"]
+
+# Process each subfolder
+for subfolder in subfolders:
+    input_subfolder = os.path.join(extraction_dir, subfolder)
+    output_subfolder = os.path.join(masked_dir, subfolder)
+    os.makedirs(output_subfolder, exist_ok=True)
+    
+    # Get a list of GeoTIFF files in the subfolder
+    files = [f for f in os.listdir(input_subfolder) if f.lower().endswith('.tif')]
+    total_files = len(files)
+    
+    for idx, filename in enumerate(files, start=1):
+        print(f"Processing {filename} ({idx}/{total_files}) in {subfolder}")
+        sys.stdout.flush()
+        input_file = os.path.join(input_subfolder, filename)
+        
+        # Extract the two bands from the multiband GeoTIFF.
+        # In ArcGIS you can reference individual bands with the "/Band_x" notation.
+        wse = arcpy.Raster(f"{input_file}/Band_1")
+        wse_qual = arcpy.Raster(f"{input_file}/Band_2")
+        
+        # Apply the mask: if wse_qual < 2 then retain the wse value; otherwise, set NoData.
+        masked_wse = Con(wse_qual < threshold, wse)
+        
+        # Build the output filename, adding a suffix to indicate masked and threshold used.
+        base_name = os.path.splitext(filename)[0]
+        output_file = os.path.join(output_subfolder, f"{base_name}_masked_lt{threshold}.tif")
+        
+        # Save the masked raster (which contains only the wse band)
+        masked_wse.save(output_file)
+        print(f"Saved masked file: {output_file}")
+        sys.stdout.flush()
+
+arcpy.CheckInExtension("Spatial")
+print("Masking process complete.")
+sys.stdout.flush()
