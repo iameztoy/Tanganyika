@@ -212,3 +212,154 @@ except Exception as e:
     print("Error during plotting: {}".format(e))
 
 print("\nAnalysis completed successfully. All outputs are stored in: {}".format(output_folder))
+
+# ------------------------------
+# Step 7: Calculate volume variations between months and generate CSV & plot.
+# ------------------------------
+print("Step 7: Calculating volume variations between months...")
+
+# For each record, estimate volume (m³) = water_extent_area (in m²) * water surface elevation (m).
+# (This is a rough approximation.)
+for rec in water_extent_stats:
+    rec["volume_m3"] = rec["water_extent_area_km2"] * 1e6 * rec["mean_elevation"]
+
+# Sort records by date.
+water_extent_stats_sorted = sorted(water_extent_stats, key=lambda x: datetime.datetime.strptime(x["date"], "%Y-%m-%d"))
+dates_vol = [datetime.datetime.strptime(rec["date"], "%Y-%m-%d") for rec in water_extent_stats_sorted]
+volumes = [rec["volume_m3"] for rec in water_extent_stats_sorted]
+
+# Compute month-to-month volume differences.
+volume_diff = [volumes[i] - volumes[i-1] for i in range(1, len(volumes))]
+dates_diff = dates_vol[1:]
+
+# Plot volume variations.
+plt.figure()
+plt.plot(dates_diff, volume_diff, marker="o", linestyle="-")
+plt.xlabel("Date")
+plt.ylabel("Volume Change (m³)")
+plt.title("Month-to-Month Volume Variations")
+plt.grid(True)
+plt.xticks(rotation=45)
+plt.tight_layout()
+
+volume_plot_output_path = os.path.join(output_folder, "Volume_Variations.png")
+plt.savefig(volume_plot_output_path)
+plt.show()
+
+print("Volume variations plot saved: {}".format(volume_plot_output_path))
+
+# ------------------------------
+# Additional Plot: Monthly Volumes Over Time
+# ------------------------------
+try:
+    plt.figure()
+    plt.plot(dates_vol, volumes, marker="o", linestyle="-")
+    plt.xlabel("Date")
+    plt.ylabel("Volume (m³)")
+    plt.title("Monthly Water Volumes Over Time")
+    plt.grid(True)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    
+    volume_time_plot_output_path = os.path.join(output_folder, "Monthly_Volume_Over_Time.png")
+    plt.savefig(volume_time_plot_output_path)
+    plt.show()
+    
+    print("Monthly volumes plot saved: {}".format(volume_time_plot_output_path))
+except Exception as e:
+    print("Error during monthly volume plotting: {}".format(e))
+
+print("\nAnalysis completed successfully. All outputs are stored in: {}".format(output_folder))
+
+# Generate a CSV file for volume variations.
+volume_csv_path = os.path.join(output_folder, "Volume_Variations.csv")
+try:
+    with open(volume_csv_path, 'w', newline='') as csvfile:
+        fieldnames = ["date", "volume_m3", "volume_change_m3"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for i, rec in enumerate(water_extent_stats_sorted):
+            if i == 0:
+                writer.writerow({"date": rec["date"], "volume_m3": rec["volume_m3"], "volume_change_m3": ""})
+            else:
+                volume_change = rec["volume_m3"] - water_extent_stats_sorted[i-1]["volume_m3"]
+                writer.writerow({"date": rec["date"], "volume_m3": rec["volume_m3"], "volume_change_m3": volume_change})
+    print("Volume variations CSV file saved: {}".format(volume_csv_path))
+except Exception as e:
+    print("Error writing volume variations CSV file: {}".format(e))
+
+print("\nAnalysis completed successfully. All outputs are stored in: {}".format(output_folder))
+
+# ------------------------------
+# Step 8: Combined Plot - Monthly Water Volume, Surface Extent, and Elevation Over Time.
+# ------------------------------
+print("Step 8: Plotting combined graph for water volume, surface extent, and elevation over time...")
+
+from mpl_toolkits.axes_grid1 import host_subplot
+import mpl_toolkits.axisartist as AA
+
+# Prepare sorted lists from water_extent_stats_sorted.
+dates_combined = [datetime.datetime.strptime(rec["date"], "%Y-%m-%d") for rec in water_extent_stats_sorted]
+extent_combined = [rec["water_extent_area_km2"] for rec in water_extent_stats_sorted]
+elevation_combined = [rec["mean_elevation"] for rec in water_extent_stats_sorted]
+volume_combined = [rec["volume_m3"] for rec in water_extent_stats_sorted]
+
+fig = plt.figure(figsize=(12, 6))
+host = host_subplot(111, axes_class=AA.Axes)
+plt.subplots_adjust(right=0.75)
+
+par1 = host.twinx()
+par2 = host.twinx()
+
+# Offset the right spine for the third axis.
+offset = 60
+new_fixed_axis = par2.get_grid_helper().new_fixed_axis
+par2.axis["right"] = new_fixed_axis(loc="right", axes=par2, offset=(offset, 0))
+par2.axis["right"].toggle(all=True)
+
+host.set_xlabel("Date")
+host.set_ylabel("Water Surface Extent (km²)")
+par1.set_ylabel("Water Surface Elevation (m)")
+par2.set_ylabel("Water Volume (m³)")
+
+p1, = host.plot(dates_combined, extent_combined, marker="o", color="b", label="Extent (km²)")
+p2, = par1.plot(dates_combined, elevation_combined, marker="s", color="g", label="Elevation (m)")
+p3, = par2.plot(dates_combined, volume_combined, marker="^", color="r", label="Volume (m³)")
+
+# Create a combined legend.
+host.legend(loc="upper left")
+
+plt.title("Monthly Water Metrics Over Time")
+combined_plot_output_path = os.path.join(output_folder, "Combined_Water_Metrics.png")
+plt.savefig(combined_plot_output_path)
+plt.show()
+
+print("Combined metrics plot saved: {}".format(combined_plot_output_path))
+
+print("\nAnalysis completed successfully. All outputs are stored in: {}".format(output_folder))
+
+# ------------------------------
+# Step 9: Plot Water Surface Elevation vs Total Water Volume
+# ------------------------------
+print("Step 9: Plotting Water Surface Elevation vs Total Water Volume...")
+
+try:
+    # Extract water surface elevation and volume from the sorted stats.
+    elevations = [rec["mean_elevation"] for rec in water_extent_stats_sorted]
+    volumes = [rec["volume_m3"] for rec in water_extent_stats_sorted]
+    
+    plt.figure(figsize=(8, 6))
+    plt.scatter(elevations, volumes, color="purple", marker="o")
+    plt.xlabel("Water Surface Elevation (m)")
+    plt.ylabel("Total Water Volume (m³)")
+    plt.title("Water Surface Elevation vs Total Water Volume")
+    plt.grid(True)
+    plt.tight_layout()
+    
+    elevation_volume_plot_path = os.path.join(output_folder, "Elevation_vs_Volume.png")
+    plt.savefig(elevation_volume_plot_path)
+    plt.show()
+    
+    print("Water Surface Elevation vs Total Water Volume plot saved:", elevation_volume_plot_path)
+except Exception as e:
+    print("Error during plotting Water Surface Elevation vs Total Water Volume:", e)
