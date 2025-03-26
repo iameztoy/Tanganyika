@@ -5,16 +5,21 @@
 """
 
 import arcpy
-from arcpy.sa import ExtractByMask, Con
+from arcpy.sa import ExtractByMask, Con, Raster
 import os
 import csv
 import time
+import numpy as np
+import matplotlib.pyplot as plt
+import datetime
 
 # Check out the Spatial Analyst extension
 arcpy.CheckOutExtension("Spatial")
 arcpy.env.overwriteOutput = True
 
+# ------------------------------
 # Set paths for inputs and outputs
+# ------------------------------
 lake_shapefile = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\0_Samples\LakeBoundary_LAEA"
 dem_raster = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_def\Biophysical\DEMs\FABDEMv12\FABDEM_TanganyikaB.tif"
 csv_file = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\0_Samples\Analysis_Version2\Summary_Statistics_Overall.csv"
@@ -25,30 +30,13 @@ if not os.path.exists(output_folder):
     os.makedirs(output_folder)
 
 # ------------------------------
-# Step 1: Create a 20 km buffer of the lake shapefile
-# ------------------------------
-print("Step 1: Creating 20 km buffer around the lake boundary...")
-buffer_output = os.path.join(output_folder, "LakeBoundary_buffer.shp")
-buffer_distance = "20000 Meters"  # 20 km in meters (assuming projection units are in meters)
-
-try:
-    arcpy.Buffer_analysis(in_features=lake_shapefile,
-                          out_feature_class=buffer_output,
-                          buffer_distance_or_field=buffer_distance,
-                          dissolve_option="ALL")
-    print("Buffer created: {}".format(buffer_output))
-except Exception as e:
-    print("Error during buffer creation: {}".format(e))
-    raise
-
-# ------------------------------
 # Step 2: Clip the DEM to the buffer
 # ------------------------------
 print("Step 2: Clipping the DEM to the buffered lake area...")
 clipped_dem_output = os.path.join(output_folder, "Clipped_DEM.tif")
 
 try:
-    # Use ExtractByMask to clip the DEM with the buffer shapefile
+    # Clip the DEM using the lake buffer
     clipped_dem = ExtractByMask(dem_raster, buffer_output)
     clipped_dem.save(clipped_dem_output)
     print("DEM clipped successfully: {}".format(clipped_dem_output))
@@ -56,11 +44,53 @@ except Exception as e:
     print("Error during DEM clipping: {}".format(e))
     raise
 
-# Create a Raster object from the clipped DEM for further analysis
-clipped_dem_raster = Raster(clipped_dem_output)
+# ------------------------------
+# Step 2b: Reproject the clipped DEM to LAEA projection
+# ------------------------------
+print("Step 2b: Reprojecting clipped DEM to LAEA projection...")
+
+# Define LAEA projection using the custom WKT centered near Lake Tanganyika.
+laea_wkt = (
+    'PROJCS["LAEA_Tanganyika",'
+    'GEOGCS["GCS_WGS_1984",'
+        'DATUM["WGS_1984",'
+            'SPHEROID["WGS_1984",6378137.0,298.257223563]],'
+        'PRIMEM["Greenwich",0.0],'
+        'UNIT["Degree",0.0174532925199433]],'
+    'PROJECTION["Lambert_Azimuthal_Equal_Area"],'
+    'PARAMETER["False_Easting",0.0],'
+    'PARAMETER["False_Northing",0.0],'
+    'PARAMETER["Central_Meridian",29.5],'
+    'PARAMETER["Latitude_Of_Origin",-6.5],'
+    'UNIT["Meter",1.0]]'
+)
+
+reprojected_dem_output = os.path.join(output_folder, "Clipped_DEM_LAEA.tif")
+try:
+    # Project the clipped DEM to LAEA; using NEAREST resampling here.
+    arcpy.ProjectRaster_management(clipped_dem_output, reprojected_dem_output, laea_wkt, "NEAREST", "", "")
+    print("DEM reprojected successfully: {}".format(reprojected_dem_output))
+except Exception as e:
+    print("Error during DEM reprojecting: {}".format(e))
+    raise
+
+# Use the reprojected DEM for further analysis.
+dem_for_analysis = Raster(reprojected_dem_output)
 
 # ------------------------------
-# Step 3: Process water elevation changes from CSV and generate water extent rasters
+# Retrieve cell size from the reprojected DEM for area calculation (in square meters)
+# ------------------------------
+cell_size_x_str = arcpy.GetRasterProperties_management(dem_for_analysis, "CELLSIZEX").getOutput(0)
+cell_size_x = float(cell_size_x_str.replace(",", "."))
+cell_size_y_str = arcpy.GetRasterProperties_management(dem_for_analysis, "CELLSIZEY").getOutput(0)
+cell_size_y = float(cell_size_y_str.replace(",", "."))
+cell_area = cell_size_x * cell_size_y  # in square meters
+
+print(cell_area)
+
+# ------------------------------
+# Step 3: Process water elevation changes from CSV, generate water extent rasters,
+#         and calculate water extent area (in km²), storing results in a CSV.
 # ------------------------------
 print("Step 3: Processing water elevation data and generating water extent rasters...")
 
@@ -84,7 +114,9 @@ if total_steps == 0:
 
 print("Found {} water elevation records.".format(total_steps))
 
-# Process each water elevation record
+# Prepare a list to hold water extent area statistics
+water_extent_stats = []
+
 start_time = time.time()
 for idx, record in enumerate(water_data):
     current_time = time.time()
@@ -101,11 +133,10 @@ for idx, record in enumerate(water_data):
     
     try:
         # Create a water extent raster:
-        # Cells with DEM value <= water elevation are flagged as water (1), others as 0.
-        water_extent_raster = Con(clipped_dem_raster <= water_elev, 1, 0)
+        # Cells in the DEM with value <= water_elev are flagged as water (1), others as 0.
+        water_extent_raster = Con(dem_for_analysis <= water_elev, 1, 0)
         
-        # Format output filename: e.g., "2023-12-01_772.32366.tif"
-        # (Adjust formatting as needed)
+        # Format output filename, e.g., "2023-12-01_772.32366.tif"
         output_raster_name = "{}_{:.5f}.tif".format(date_str, water_elev)
         output_raster_path = os.path.join(output_folder, output_raster_name)
         
@@ -113,8 +144,71 @@ for idx, record in enumerate(water_data):
         water_extent_raster.save(output_raster_path)
         print("Water extent raster saved: {}".format(output_raster_path))
         
+        # To calculate the water area, convert the saved raster to a NumPy array
+        saved_raster = Raster(output_raster_path)
+        water_array = arcpy.RasterToNumPyArray(saved_raster)
+        
+        # Count the number of water cells (value = 1) and calculate the area in m²
+        water_cells = np.count_nonzero(water_array == 1)
+        water_extent_area_m2 = water_cells * cell_area  # in square meters
+        water_extent_area_km2 = water_extent_area_m2 / 1e6  # convert to square kilometers
+        
+        print("Calculated water extent area: {:.4f} km²".format(water_extent_area_km2))
+        
+        # Append the statistics to our list
+        water_extent_stats.append({
+            "date": date_str,
+            "mean_elevation": water_elev,
+            "water_extent_area_km2": water_extent_area_km2
+        })
+        
     except Exception as e:
         print("Error processing record {}: {}".format(idx + 1, e))
         continue
+
+# ------------------------------
+# Step 4: Write the water extent statistics to a CSV file
+# ------------------------------
+output_csv_path = os.path.join(output_folder, "WaterExtent_Area_by_Date.csv")
+try:
+    with open(output_csv_path, 'w', newline='') as csvfile:
+        fieldnames = ["date", "mean_elevation", "water_extent_area_km2"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for rec in water_extent_stats:
+            writer.writerow(rec)
+    print("\nWater extent area CSV file saved: {}".format(output_csv_path))
+except Exception as e:
+    print("Error writing water extent CSV file: {}".format(e))
+
+print("\nAnalysis completed successfully. All outputs are stored in: {}".format(output_folder))
+
+# ------------------------------
+# Step 5: Plot the evolution of water extent areas over time.
+# ------------------------------
+try:
+    # Convert date strings to datetime objects for better plotting
+    dates = [datetime.datetime.strptime(rec["date"], "%Y-%m-%d") for rec in water_extent_stats]
+    areas = [rec["water_extent_area_km2"] for rec in water_extent_stats]
+
+    # Sort the records by date (if they are not already in order)
+    dates, areas = zip(*sorted(zip(dates, areas)))
+
+    plt.figure()
+    plt.plot(dates, areas, marker="o", linestyle="-")
+    plt.xlabel("Date")
+    plt.ylabel("Water Extent Area (km²)")
+    plt.title("Evolution of Water Extent Area Over Time")
+    plt.grid(True)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    plot_output_path = os.path.join(output_folder, "WaterExtent_Area_Evolution.png")
+    plt.savefig(plot_output_path)
+    plt.show()
+
+    print("Plot saved: {}".format(plot_output_path))
+except Exception as e:
+    print("Error during plotting: {}".format(e))
 
 print("\nAnalysis completed successfully. All outputs are stored in: {}".format(output_folder))
