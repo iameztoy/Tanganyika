@@ -34,8 +34,30 @@ lake_boundary_edge = lake_boundary.boundary
 # Identify elevation columns (assuming they start with 'd')
 elevation_cols = [col for col in gdf.columns if col.startswith('d')]
 
+"""
+
+Calculation in lat/long - Not implemented here.
+
 # --------------------------
 # 2. Define Spatial Regions using the Provided Lake Boundary
+# --------------------------
+# Calculate distance from each point to the lake boundary's edge using the precomputed boundary
+# (In LAEA, distances are in meters, so no change is needed for distance calculation)
+gdf["dist_to_boundary"] = gdf.geometry.apply(lambda geom: geom.distance(lake_boundary_edge))
+
+# Define a threshold (10% of max distance) to classify points as 'coastal'
+threshold = 0.1 * gdf["dist_to_boundary"].max()
+gdf["region_coastal"] = gdf["dist_to_boundary"].apply(lambda d: 'coastal' if d < threshold else 'central')
+
+# For north vs. south: Reproject the LAEA geometries to WGS84 to extract real latitude values
+gdf_wgs84 = gdf.to_crs(epsg=4326)
+gdf["lat"] = gdf_wgs84.geometry.apply(lambda geom: geom.y)
+median_lat = gdf["lat"].median()
+gdf["region_ns"] = gdf["lat"].apply(lambda lat: 'north' if lat > median_lat else 'south')
+"""
+
+# --------------------------
+# 2. Define Spatial Regions using the Provided Lake Boundary (LAEA in meters)
 # --------------------------
 # Calculate distance from each point to the lake boundary's edge using the precomputed boundary
 gdf["dist_to_boundary"] = gdf.geometry.apply(lambda geom: geom.distance(lake_boundary_edge))
@@ -44,10 +66,10 @@ gdf["dist_to_boundary"] = gdf.geometry.apply(lambda geom: geom.distance(lake_bou
 threshold = 0.1 * gdf["dist_to_boundary"].max()
 gdf["region_coastal"] = gdf["dist_to_boundary"].apply(lambda d: 'coastal' if d < threshold else 'central')
 
-# For north vs. south: use the y-coordinate (latitude) and the median value
-gdf["lat"] = gdf.geometry.apply(lambda geom: geom.y)
-median_lat = gdf["lat"].median()
-gdf["region_ns"] = gdf["lat"].apply(lambda lat: 'north' if lat > median_lat else 'south')
+# For north vs. south: use the y-coordinate (in meters) directly from each point's geometry.
+gdf["y_coord"] = gdf.geometry.apply(lambda geom: geom.y)
+median_y = gdf["y_coord"].median()
+gdf["region_ns"] = gdf["y_coord"].apply(lambda y: 'north' if y > median_y else 'south')
 
 # Write the updated GeoDataFrame to a new shapefile
 output_shapefile = os.path.join(base_folder, "Samples_with_Distance_and_Region.shp")
