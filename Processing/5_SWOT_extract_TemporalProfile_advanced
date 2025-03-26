@@ -49,11 +49,7 @@ gdf["lat"] = gdf.geometry.apply(lambda geom: geom.y)
 median_lat = gdf["lat"].median()
 gdf["region_ns"] = gdf["lat"].apply(lambda lat: 'north' if lat > median_lat else 'south')
 
-
-# --------------------------
-# 2.1. Write the updated GeoDataFrame to a new shapefile
-# --------------------------
-
+# Write the updated GeoDataFrame to a new shapefile
 output_shapefile = os.path.join(base_folder, "Samples_with_Distance_and_Region.shp")
 gdf.to_file(output_shapefile)
 
@@ -107,6 +103,7 @@ print("Coastal vs. Central Summary Statistics saved as 'Summary_Statistics_Coast
 summary_ns = df_long.groupby(['date', 'region_ns'])['elevation'].agg(['mean', 'median', 'std', 'min', 'max'])
 summary_ns.to_csv(os.path.join(base_folder, "Summary_Statistics_North_vs_South.csv"))
 print("North vs. South Summary Statistics saved as 'Summary_Statistics_North_vs_South.csv'")
+
 
 # --------------------------
 # 6. Time Series Plots
@@ -191,4 +188,5 @@ trend_plot_path = os.path.join(base_folder, "Trend_Analysis.png")
 plt.savefig(trend_plot_path)
 plt.close()
 print("Trend analysis plot saved as 'Trend_Analysis.png'")
+
 
