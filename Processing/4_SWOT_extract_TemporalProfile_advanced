@@ -1,189 +1,160 @@
 #!/usr/bin/python
 
 """
-This script automates a workflow that involves generating random points, extracting raster data at those points, and then visualizing the results. Here's a brief overview:
-
-Random Points Generation:
-The script creates 500 random points inside a polygon defined in "targetShape.shp". This simulates sampling locations (for example, across Lake Tanganyika).
-
-Spatial Join:
-It performs a spatial join so that each random point inherits the attributes from the polygon, ensuring that the point data is enriched with any relevant information from the polygon layer.
-
-Raster Value Extraction:
-The script processes multiple raster TIFF files stored in a specified folder. Each raster file’s name contains a date (in YYYYMM format) and a processing level. For each raster, the script extracts the cell value at the location of each random point.
-
-CSV Creation:
-All extracted data—including the point ID, coordinates, raster value, date, and processing level—are stored in a CSV file.
-
-Temporal Profile Plotting:
-Using pandas and matplotlib, the script reads the CSV data to generate a time-series plot. It plots individual point profiles (in blue) and calculates a monthly average (displayed as a black line). The resulting plot is then saved as a PNG file.
-
-Throughout the process, the script logs progress messages so you know which step is running and how long it might take.
 
 """
 
-import arcpy
 import os
-import re
-import glob
-import csv
+import geopandas as gpd
 import pandas as pd
 import matplotlib.pyplot as plt
-import datetime
+import numpy as np
+from shapely.geometry import Point
+from scipy.stats import linregress
 
-def log(message):
-    print(message)
-    arcpy.AddMessage(message)
+# --------------------------
+# 1. Set Paths and Load the Shapefile
+# --------------------------
+base_folder = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\0_Samples"
+input_shapefile = os.path.join(base_folder, "Samples_with_RasterValues.shp")
 
-def main():
-    # Define folder paths and filenames.
-    base_folder = r"C:\Users\ibana\Desktop\deleteme"
-    polygon_shp = os.path.join(base_folder, "targetShape.shp")
-    random_points_shp = os.path.join(base_folder, "randomPoints.shp")
-    joined_points_shp = os.path.join(base_folder, "randomPoints_joined.shp")
-    
-    # Folder where the raster files are stored.
-    raster_folder = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff_sel\mosaic"
-    
-    # Create (if not exists) the output folder for the CSV and PNG.
-    output_profile_folder = os.path.join(base_folder, "profile")
-    if not os.path.exists(output_profile_folder):
-        os.makedirs(output_profile_folder)
-        
-    csv_output_path = os.path.join(output_profile_folder, "temporal_profile.csv")
-    plot_output_path = os.path.join(output_profile_folder, "profile_plot.png")
-    
-    # Remove preexisting CSV or PNG files if they exist.
-    if os.path.exists(csv_output_path):
-        os.remove(csv_output_path)
-    if os.path.exists(plot_output_path):
-        os.remove(plot_output_path)
-    
-    log("Starting processing...")
+# Read the shapefile using GeoPandas
+gdf = gpd.read_file(input_shapefile)
 
-    # ----------------------------------------------------------------------------
-    # Step 1. Create 500 random points inside the polygon.
-    # ----------------------------------------------------------------------------
-    log("Step 1: Creating 500 random points within the polygon...")
-    if arcpy.Exists(random_points_shp):
-        arcpy.Delete_management(random_points_shp)
-    
-    arcpy.management.CreateRandomPoints(out_path=base_folder,
-                                        out_name="randomPoints.shp",
-                                        constraining_feature_class=polygon_shp,
-                                        number_of_points_or_field="500")
-    log("Random points created.")
+# Identify elevation columns (assuming they start with 'd')
+elevation_cols = [col for col in gdf.columns if col.startswith('d')]
 
-    # ----------------------------------------------------------------------------
-    # Step 2. Spatial Join: Inherit polygon attributes.
-    # ----------------------------------------------------------------------------
-    log("Step 2: Performing spatial join to inherit polygon attributes...")
-    if arcpy.Exists(joined_points_shp):
-        arcpy.Delete_management(joined_points_shp)
-    
-    # Use the "WITHIN" match option since points fall within the polygon.
-    arcpy.analysis.SpatialJoin(target_features=random_points_shp,
-                               join_features=polygon_shp,
-                               out_feature_class=joined_points_shp,
-                               join_operation="JOIN_ONE_TO_ONE",
-                               match_option="WITHIN")
-    log("Spatial join completed.")
+# --------------------------
+# 2. Define Spatial Regions
+# --------------------------
+# Compute the convex hull of all points (approximate lake boundary)
+lake_boundary = gdf.unary_union.convex_hull
 
-    # ----------------------------------------------------------------------------
-    # Step 3. Extract raster values at each point for all raster files.
-    # ----------------------------------------------------------------------------
-    log("Step 3: Extracting raster values from raster files...")
-    csv_rows = []
-    header = ["PointID", "X", "Y", "RasterValue", "Date", "ProcessingLevel"]
-    
-    raster_files = glob.glob(os.path.join(raster_folder, "*.tif"))
-    if not raster_files:
-        log("ERROR: No raster files found in folder: " + raster_folder)
-        return
+# Calculate distance from each point to the lake boundary
+gdf["dist_to_boundary"] = gdf.geometry.apply(lambda geom: geom.distance(lake_boundary.boundary))
 
-    # Regex pattern for extracting date (YYYYMM) and processing level (e.g., PIC0_04).
-    pattern = re.compile(r".*_(\d{6})_(PIC\d+_\d+)_.*\.tif$", re.IGNORECASE)
-    
-    # Read the points from the joined shapefile.
-    points = []
-    with arcpy.da.SearchCursor(joined_points_shp, ["OID@", "SHAPE@XY"]) as cursor:
-        for row in cursor:
-            points.append({"id": row[0], "x": row[1][0], "y": row[1][1]})
-    
-    total_rasters = len(raster_files)
-    start_time = datetime.datetime.now()
-    arcpy.SetProgressor("step", "Extracting raster values...", 0, total_rasters, 1)
-    
-    for i, raster_path in enumerate(raster_files, start=1):
-        basename = os.path.basename(raster_path)
-        match = pattern.match(basename)
-        if not match:
-            log("WARNING: Filename does not match pattern: " + basename)
-            continue
-        date_str = match.group(1)
-        proc_level = match.group(2)
-        
-        # Calculate elapsed time and estimated remaining time.
-        current_time = datetime.datetime.now()
-        elapsed = current_time - start_time
-        avg_time_per_raster = elapsed / i
-        estimated_total = avg_time_per_raster * total_rasters
-        remaining = estimated_total - elapsed
-        
-        log(f"Processing raster {i}/{total_rasters}: {basename} | Elapsed: {elapsed} | Est. remaining: {remaining}")
-        
-        for pt in points:
-            coords_str = f"{pt['x']} {pt['y']}"
-            try:
-                result = arcpy.GetCellValue_management(raster_path, coords_str)
-                value = float(result.getOutput(0))
-            except Exception:
-                value = None
-            csv_rows.append([pt["id"], pt["x"], pt["y"], value, date_str, proc_level])
-        
-        arcpy.SetProgressorPosition(i)
-    
-    arcpy.ResetProgressor()
-    log("Raster value extraction completed.")
+# Define a threshold (10% of max distance) to classify points as 'coastal'
+threshold = 0.1 * gdf["dist_to_boundary"].max()
+gdf["region_coastal"] = gdf["dist_to_boundary"].apply(lambda d: 'coastal' if d < threshold else 'central')
 
-    # ----------------------------------------------------------------------------
-    # Step 4. Write the CSV file.
-    # ----------------------------------------------------------------------------
-    log("Step 4: Writing CSV file with extracted values...")
-    with open(csv_output_path, mode="w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(header)
-        writer.writerows(csv_rows)
-    log("CSV file written: " + csv_output_path)
-    
-    # ----------------------------------------------------------------------------
-    # Step 5. Plot the temporal profiles.
-    # ----------------------------------------------------------------------------
-    log("Step 5: Plotting temporal profiles...")
-    df = pd.DataFrame(csv_rows, columns=header)
-    df["Date"] = pd.to_datetime(df["Date"], format="%Y%m")
-    df.sort_values("Date", inplace=True)
-    
-    plt.figure(figsize=(10, 6))
-    # Plot each point's temporal profile (blue with transparency).
-    for pt_id, group in df.groupby("PointID"):
-        plt.plot(group["Date"], group["RasterValue"], color="blue", alpha=0.3)
-    
-    # Calculate and plot the monthly average.
-    monthly_avg = df.groupby("Date")["RasterValue"].mean()
-    plt.plot(monthly_avg.index, monthly_avg.values, color="black", linewidth=2, label="Monthly Average")
-    
-    plt.xlabel("Time")
-    plt.ylabel("Raster Value")
-    plt.title("Temporal Profiles at Random Points")
-    plt.legend()
-    plt.tight_layout()
-    
-    plt.savefig(plot_output_path)
-    plt.close()
-    log("Plot saved: " + plot_output_path)
-    
-    log("Processing complete. CSV and plot saved in: " + output_profile_folder)
+# For north vs. south: use the y-coordinate (latitude) and the median value
+gdf["lat"] = gdf.geometry.apply(lambda geom: geom.y)
+median_lat = gdf["lat"].median()
+gdf["region_ns"] = gdf["lat"].apply(lambda lat: 'north' if lat > median_lat else 'south')
 
-if __name__ == '__main__':
-    main()
+# --------------------------
+# 3. Reshape Data for Temporal Analysis
+# --------------------------
+# Melt the data so each row is a point-date combination
+df_long = gdf[['geometry', 'region_coastal', 'region_ns'] + elevation_cols].copy()
+df_long = df_long.melt(id_vars=['geometry', 'region_coastal', 'region_ns'], 
+                       value_vars=elevation_cols, 
+                       var_name='date_str', 
+                       value_name='elevation')
+
+# Parse the date from the column name (e.g., 'd202411' -> November 2024)
+df_long['year'] = df_long['date_str'].str[1:5].astype(int)
+df_long['month'] = df_long['date_str'].str[5:7].astype(int)
+df_long['date'] = pd.to_datetime(dict(year=df_long.year, month=df_long.month, day=1))
+
+# --------------------------
+# 4. Summary Statistics
+# --------------------------
+# Overall summary statistics by date
+summary_overall = df_long.groupby('date')['elevation'].agg(['mean', 'median', 'std', 'min', 'max'])
+summary_overall.to_csv(os.path.join(base_folder, "Summary_Statistics_Overall.csv"))
+print("Overall Summary Statistics saved as 'Summary_Statistics_Overall.csv'")
+
+# Summary statistics by coastal vs. central
+summary_coastal = df_long.groupby(['date', 'region_coastal'])['elevation'].agg(['mean', 'median', 'std', 'min', 'max'])
+summary_coastal.to_csv(os.path.join(base_folder, "Summary_Statistics_Coastal_vs_Central.csv"))
+print("Coastal vs. Central Summary Statistics saved as 'Summary_Statistics_Coastal_vs_Central.csv'")
+
+# Summary statistics by north vs. south
+summary_ns = df_long.groupby(['date', 'region_ns'])['elevation'].agg(['mean', 'median', 'std', 'min', 'max'])
+summary_ns.to_csv(os.path.join(base_folder, "Summary_Statistics_North_vs_South.csv"))
+print("North vs. South Summary Statistics saved as 'Summary_Statistics_North_vs_South.csv'")
+
+# --------------------------
+# 5. Time Series Plots
+# --------------------------
+# Overall time series of average water elevation
+plt.figure(figsize=(10, 5))
+plt.plot(summary_overall.index, summary_overall['mean'], marker='o', label='Overall Mean')
+plt.xlabel('Date')
+plt.ylabel('Water Surface Elevation')
+plt.title('Overall Average Water Surface Elevation Over Time')
+plt.legend()
+plt.grid(True)
+overall_plot_path = os.path.join(base_folder, "Overall_TimeSeries.png")
+plt.savefig(overall_plot_path)
+plt.close()
+print("Overall time series plot saved as 'Overall_TimeSeries.png'")
+
+# Time series for coastal vs. central
+fig, ax = plt.subplots(figsize=(10, 5))
+for region in ['coastal', 'central']:
+    region_data = summary_coastal.xs(region, level='region_coastal')
+    ax.plot(region_data.index, region_data['mean'], marker='o', label=f'{region.capitalize()} Mean')
+ax.set_xlabel('Date')
+ax.set_ylabel('Water Surface Elevation')
+ax.set_title('Water Surface Elevation Over Time (Coastal vs. Central)')
+ax.legend()
+ax.grid(True)
+coastal_plot_path = os.path.join(base_folder, "Coastal_vs_Central_TimeSeries.png")
+plt.savefig(coastal_plot_path)
+plt.close()
+print("Coastal vs. Central time series plot saved as 'Coastal_vs_Central_TimeSeries.png'")
+
+# Time series for north vs. south
+fig, ax = plt.subplots(figsize=(10, 5))
+for region in ['north', 'south']:
+    region_data = summary_ns.xs(region, level='region_ns')
+    ax.plot(region_data.index, region_data['mean'], marker='o', label=f'{region.capitalize()} Mean')
+ax.set_xlabel('Date')
+ax.set_ylabel('Water Surface Elevation')
+ax.set_title('Water Surface Elevation Over Time (North vs. South)')
+ax.legend()
+ax.grid(True)
+ns_plot_path = os.path.join(base_folder, "North_vs_South_TimeSeries.png")
+plt.savefig(ns_plot_path)
+plt.close()
+print("North vs. South time series plot saved as 'North_vs_South_TimeSeries.png'")
+
+# --------------------------
+# 6. Seasonal Boxplots
+# --------------------------
+df_long['month_name'] = df_long['date'].dt.strftime('%b')
+plt.figure(figsize=(12, 6))
+df_long.boxplot(column='elevation', by='month_name', grid=False)
+plt.title('Monthly Distribution of Water Surface Elevation')
+plt.suptitle('')  # remove default title to keep it clean
+plt.xlabel('Month')
+plt.ylabel('Elevation')
+boxplot_path = os.path.join(base_folder, "Monthly_Boxplot.png")
+plt.savefig(boxplot_path)
+plt.close()
+print("Monthly boxplot saved as 'Monthly_Boxplot.png'")
+
+# --------------------------
+# 7. Trend Analysis (Overall)
+# --------------------------
+# Convert dates to numeric format for regression (ordinal values)
+time_numeric = summary_overall.index.map(pd.Timestamp.toordinal)
+slope, intercept, r_value, p_value, std_err = linregress(time_numeric, summary_overall['mean'])
+print(f"Trend Analysis Results: Slope: {slope:.4f}, Intercept: {intercept:.4f}, R-squared: {r_value**2:.4f}")
+
+# Plot the overall trend
+plt.figure(figsize=(10, 5))
+plt.plot(summary_overall.index, summary_overall['mean'], marker='o', label='Overall Mean')
+trend_line = intercept + slope * time_numeric
+plt.plot(summary_overall.index, trend_line, color='red', linestyle='--', label='Trend Line')
+plt.xlabel('Date')
+plt.ylabel('Water Surface Elevation')
+plt.title('Trend Analysis of Water Surface Elevation')
+plt.legend()
+plt.grid(True)
+trend_plot_path = os.path.join(base_folder, "Trend_Analysis.png")
+plt.savefig(trend_plot_path)
+plt.close()
+print("Trend analysis plot saved as 'Trend_Analysis.png'")
