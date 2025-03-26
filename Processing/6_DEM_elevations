@@ -1,0 +1,114 @@
+import arcpy
+from arcpy.sa import ExtractByMask, Con
+import os
+import csv
+import time
+
+# Check out the Spatial Analyst extension
+arcpy.CheckOutExtension("Spatial")
+arcpy.env.overwriteOutput = True
+
+# Set paths for inputs and outputs
+lake_shapefile = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\0_Samples\LakeBoundary_LAEA"
+dem_raster = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_def\Biophysical\DEMs\FABDEMv12\FABDEM_TanganyikaB.tif"
+csv_file = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\0_Samples\Analysis_Version2\Summary_Statistics_Overall.csv"
+output_folder = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\DEM_analysis"
+
+# Create output folder if it doesn't exist
+if not os.path.exists(output_folder):
+    os.makedirs(output_folder)
+
+# ------------------------------
+# Step 1: Create a 20 km buffer of the lake shapefile
+# ------------------------------
+print("Step 1: Creating 20 km buffer around the lake boundary...")
+buffer_output = os.path.join(output_folder, "LakeBoundary_buffer.shp")
+buffer_distance = "20000 Meters"  # 20 km in meters (assuming projection units are in meters)
+
+try:
+    arcpy.Buffer_analysis(in_features=lake_shapefile,
+                          out_feature_class=buffer_output,
+                          buffer_distance_or_field=buffer_distance,
+                          dissolve_option="ALL")
+    print("Buffer created: {}".format(buffer_output))
+except Exception as e:
+    print("Error during buffer creation: {}".format(e))
+    raise
+
+# ------------------------------
+# Step 2: Clip the DEM to the buffer
+# ------------------------------
+print("Step 2: Clipping the DEM to the buffered lake area...")
+clipped_dem_output = os.path.join(output_folder, "Clipped_DEM.tif")
+
+try:
+    # Use ExtractByMask to clip the DEM with the buffer shapefile
+    clipped_dem = ExtractByMask(dem_raster, buffer_output)
+    clipped_dem.save(clipped_dem_output)
+    print("DEM clipped successfully: {}".format(clipped_dem_output))
+except Exception as e:
+    print("Error during DEM clipping: {}".format(e))
+    raise
+
+# Create a Raster object from the clipped DEM for further analysis
+clipped_dem_raster = Raster(clipped_dem_output)
+
+# ------------------------------
+# Step 3: Process water elevation changes from CSV and generate water extent rasters
+# ------------------------------
+print("Step 3: Processing water elevation data and generating water extent rasters...")
+
+# Read the CSV file; expected CSV columns: "date" and "mean_elevation"
+water_data = []
+with open(csv_file, newline='') as csvfile:
+    reader = csv.DictReader(csvfile)
+    for row in reader:
+        try:
+            water_data.append({
+                "date": row["date"],
+                "mean": float(row["mean"])
+            })
+        except Exception as ex:
+            print("Error processing row {}: {}".format(row, ex))
+            continue
+
+total_steps = len(water_data)
+if total_steps == 0:
+    raise Exception("No valid data found in CSV file.")
+
+print("Found {} water elevation records.".format(total_steps))
+
+# Process each water elevation record
+start_time = time.time()
+for idx, record in enumerate(water_data):
+    current_time = time.time()
+    elapsed = current_time - start_time
+    avg_time = elapsed / (idx + 1)
+    remaining = avg_time * (total_steps - idx - 1)
+    
+    date_str = record["date"]
+    water_elev = record["mean"]
+    
+    print("\nProcessing record {} of {}: Date = {}, Mean Elevation = {} m".format(
+        idx + 1, total_steps, date_str, water_elev))
+    print("Estimated remaining time: {:.1f} seconds".format(remaining))
+    
+    try:
+        # Create a water extent raster:
+        # Cells with DEM value <= water elevation are flagged as water (1), others as 0.
+        water_extent_raster = Con(clipped_dem_raster <= water_elev, 1, 0)
+        
+        # Format output filename: e.g., "2023-12-01_772.32366.tif"
+        # (Adjust formatting as needed)
+        output_raster_name = "{}_{:.5f}.tif".format(date_str, water_elev)
+        output_raster_path = os.path.join(output_folder, output_raster_name)
+        
+        # Save the resulting water extent raster
+        water_extent_raster.save(output_raster_path)
+        print("Water extent raster saved: {}".format(output_raster_path))
+        
+    except Exception as e:
+        print("Error processing record {}: {}".format(idx + 1, e))
+        continue
+
+print("\nAnalysis completed successfully. All outputs are stored in: {}".format(output_folder))
