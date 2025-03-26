@@ -49,6 +49,16 @@ gdf["lat"] = gdf.geometry.apply(lambda geom: geom.y)
 median_lat = gdf["lat"].median()
 gdf["region_ns"] = gdf["lat"].apply(lambda lat: 'north' if lat > median_lat else 'south')
 
+
+# --------------------------
+# 2.1. Write the updated GeoDataFrame to a new shapefile
+# --------------------------
+
+output_shapefile = os.path.join(base_folder, "Samples_with_Distance_and_Region.shp")
+gdf.to_file(output_shapefile)
+
+print("New shapefile with distance and region classifications saved as:", output_shapefile)
+
 # --------------------------
 # 3. Reshape Data for Temporal Analysis and Filter Out Invalid Values
 # --------------------------
