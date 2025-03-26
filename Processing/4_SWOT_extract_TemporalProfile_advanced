@@ -13,25 +13,32 @@ from shapely.geometry import Point
 from scipy.stats import linregress
 
 # --------------------------
-# 1. Set Paths and Load the Shapefile
+# 1. Set Paths and Load the Shapefiles
 # --------------------------
+# Define the base folder for the samples
 base_folder = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\0_Samples"
 input_shapefile = os.path.join(base_folder, "Samples_with_RasterValues.shp")
 
-# Read the shapefile using GeoPandas
+# Load the point shapefile with water elevation data
 gdf = gpd.read_file(input_shapefile)
+
+# Load the lake boundary shapefile from the provided location
+lake_boundary_shapefile = r"C:\Users\ibana\Desktop\deleteme\Lake\tang.shp"
+lake_gdf = gpd.read_file(lake_boundary_shapefile)
+
+# Create a single geometry for the lake boundary by unioning all parts (using the recommended method)
+lake_boundary = lake_gdf.geometry.union_all()
+# Precompute the boundary edge
+lake_boundary_edge = lake_boundary.boundary
 
 # Identify elevation columns (assuming they start with 'd')
 elevation_cols = [col for col in gdf.columns if col.startswith('d')]
 
 # --------------------------
-# 2. Define Spatial Regions
+# 2. Define Spatial Regions using the Provided Lake Boundary
 # --------------------------
-# Compute the convex hull of all points (approximate lake boundary)
-lake_boundary = gdf.unary_union.convex_hull
-
-# Calculate distance from each point to the lake boundary
-gdf["dist_to_boundary"] = gdf.geometry.apply(lambda geom: geom.distance(lake_boundary.boundary))
+# Calculate distance from each point to the lake boundary's edge using the precomputed boundary
+gdf["dist_to_boundary"] = gdf.geometry.apply(lambda geom: geom.distance(lake_boundary_edge))
 
 # Define a threshold (10% of max distance) to classify points as 'coastal'
 threshold = 0.1 * gdf["dist_to_boundary"].max()
@@ -43,9 +50,9 @@ median_lat = gdf["lat"].median()
 gdf["region_ns"] = gdf["lat"].apply(lambda lat: 'north' if lat > median_lat else 'south')
 
 # --------------------------
-# 3. Reshape Data for Temporal Analysis
+# 3. Reshape Data for Temporal Analysis and Filter Out Invalid Values
 # --------------------------
-# Melt the data so each row is a point-date combination
+# Melt the data so that each row represents a point-date combination
 df_long = gdf[['geometry', 'region_coastal', 'region_ns'] + elevation_cols].copy()
 df_long = df_long.melt(id_vars=['geometry', 'region_coastal', 'region_ns'], 
                        value_vars=elevation_cols, 
@@ -57,8 +64,24 @@ df_long['year'] = df_long['date_str'].str[1:5].astype(int)
 df_long['month'] = df_long['date_str'].str[5:7].astype(int)
 df_long['date'] = pd.to_datetime(dict(year=df_long.year, month=df_long.month, day=1))
 
+# Remove any elevation values equal to 0 (i.e., no valid data)
+df_long = df_long[df_long['elevation'] != 0]
+
 # --------------------------
-# 4. Summary Statistics
+# 4. Remove Outliers (IQR method applied per date)
+# --------------------------
+def remove_outliers(group):
+    Q1 = group['elevation'].quantile(0.25)
+    Q3 = group['elevation'].quantile(0.75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+    return group[(group['elevation'] >= lower_bound) & (group['elevation'] <= upper_bound)]
+
+df_long = df_long.groupby('date', group_keys=False).apply(remove_outliers)
+
+# --------------------------
+# 5. Summary Statistics
 # --------------------------
 # Overall summary statistics by date
 summary_overall = df_long.groupby('date')['elevation'].agg(['mean', 'median', 'std', 'min', 'max'])
@@ -76,7 +99,7 @@ summary_ns.to_csv(os.path.join(base_folder, "Summary_Statistics_North_vs_South.c
 print("North vs. South Summary Statistics saved as 'Summary_Statistics_North_vs_South.csv'")
 
 # --------------------------
-# 5. Time Series Plots
+# 6. Time Series Plots
 # --------------------------
 # Overall time series of average water elevation
 plt.figure(figsize=(10, 5))
@@ -122,7 +145,7 @@ plt.close()
 print("North vs. South time series plot saved as 'North_vs_South_TimeSeries.png'")
 
 # --------------------------
-# 6. Seasonal Boxplots
+# 7. Seasonal Boxplots
 # --------------------------
 df_long['month_name'] = df_long['date'].dt.strftime('%b')
 plt.figure(figsize=(12, 6))
@@ -137,7 +160,7 @@ plt.close()
 print("Monthly boxplot saved as 'Monthly_Boxplot.png'")
 
 # --------------------------
-# 7. Trend Analysis (Overall)
+# 8. Trend Analysis (Overall)
 # --------------------------
 # Convert dates to numeric format for regression (ordinal values)
 time_numeric = summary_overall.index.map(pd.Timestamp.toordinal)
@@ -158,3 +181,4 @@ trend_plot_path = os.path.join(base_folder, "Trend_Analysis.png")
 plt.savefig(trend_plot_path)
 plt.close()
 print("Trend analysis plot saved as 'Trend_Analysis.png'")
+
