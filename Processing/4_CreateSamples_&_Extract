@@ -1,0 +1,184 @@
+#!/usr/bin/python
+
+import arcpy
+import os
+import re
+
+# Check out the GeoStats extension (needed for geostatistical analyst tools)
+arcpy.CheckOutExtension("GeoStats")
+
+# Enable overwriting outputs
+arcpy.env.overwriteOutput = True
+
+# Set the workspace folder for outputs
+workspace = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\0_Samples"
+arcpy.env.workspace = workspace
+
+# --------------------------
+# 0.1 Reproject the Lake Boundary (if needed)
+# --------------------------
+# Path to the lake boundary polygon shapefile (update this path as needed)
+input_boundary = r"C:\Users\ibana\Desktop\deleteme\Lake\tang.shp"  # Replace with your actual boundary shapefile
+
+# Output path for the projected boundary
+projected_boundary = os.path.join(workspace, "LakeBoundary_LAEA.shp")
+
+# Define the custom LAEA projection WKT (centered near Lake Tanganyika)
+laea_wkt = (
+    'PROJCS["LAEA_Tanganyika",'
+    'GEOGCS["GCS_WGS_1984",'
+        'DATUM["WGS_1984",'
+            'SPHEROID["WGS_1984",6378137.0,298.257223563]],'
+        'PRIMEM["Greenwich",0.0],'
+        'UNIT["Degree",0.0174532925199433]],'
+    'PROJECTION["Lambert_Azimuthal_Equal_Area"],'
+    'PARAMETER["False_Easting",0.0],'
+    'PARAMETER["False_Northing",0.0],'
+    'PARAMETER["Central_Meridian",29.5],'
+    'PARAMETER["Latitude_Of_Origin",-6.5],'
+    'UNIT["Meter",1.0]]'
+)
+
+# Describe the input boundary to check its spatial reference
+desc = arcpy.Describe(input_boundary)
+spatial_ref = desc.spatialReference
+
+# If the input is not already in LAEA (or not in meters), project it.
+# (This check compares the spatial reference; adjust as needed if the WKT strings differ in formatting.)
+if spatial_ref.factoryCode == 0 or spatial_ref.name != "LAEA_Tanganyika":
+    arcpy.Project_management(input_boundary, projected_boundary, laea_wkt)
+    print("Lake boundary reprojected to LAEA and saved at:", projected_boundary)
+else:
+    projected_boundary = input_boundary
+    print("Lake boundary already in LAEA; using the original shapefile.")
+
+# --------------------------
+# 0.2. Create a Hexagonal Systematic Point Grid within the Lake Boundary
+# --------------------------
+# The tool used is "Create Spatial Sampling Locations".
+# Parameters:
+#   - Sampling Method: SYSTEMATIC
+#   - Bin Shape: HEXAGON
+#   - Bin Size: 10000 (meters)
+#   - Output Geometry Type: POINT
+
+# Define output shapefile for the point grid
+output_samples = os.path.join(workspace, "Samples_Tanganyika.shp")
+
+# Use positional parameters for CreateSpatialSamplingLocations:
+# Parameter order: 
+# 1. in_features
+# 2. out_feature_class
+# 3. sampling_method
+# 4. bin_shape
+# 5. bin_size
+# 6. output_geometry_type
+
+arcpy.management.CreateSpatialSamplingLocations(
+    projected_boundary,         # in_features
+    output_samples,             # out_feature_class
+    "SYSTEMATIC",               # sampling_method
+    "",                         # strata_id_fiel
+    "",                         # strata_count_method,
+    "HEXAGON",                  # bin_shape
+    "10000",                    # bin_size (in meters)
+    "",                         # h3_resolution
+    "",                         # num_samples,
+    "",                         # num_samples_per_strata,
+    "",                         # population_field,
+    "POINT",                    # output_geometry_type
+    "",                         # min_distance
+    ""                          # spatial_relationship
+)
+
+print("Spatial sampling locations (hexagonal grid) created and saved at:", output_samples)
+
+
+# Define file paths and directories
+samples_shp = output_samples
+samples_folder = workspace
+raster_folder = r"C:\Users\ibana\Desktop\JRC_Tanganica\GIS_Intermediate\Intermediate_files\SWOT\output\geotiff_sel\masked_lt2\mosaic"
+
+print(samples_folder)
+print(samples_shp)
+
+# List all raster files (adjust extensions if needed)
+raster_list = [f for f in os.listdir(raster_folder) if f.lower().endswith(('.tif', '.tiff', '.tifv'))]
+print(raster_list)
+
+# List to store (table_path, new_date_field) tuples for later joining
+extracted_tables = []
+
+
+for raster in raster_list:
+    raster_path = os.path.join(raster_folder, raster)
+    
+    # Extract the date string (format: _YYYYMM_) from the raster name
+    date_match = re.search(r'_(\d{6})_', raster)
+    if date_match:
+        date_str = date_match.group(1)
+        new_field = "d" + date_str  # e.g., d202411
+    else:
+        arcpy.AddWarning("Could not extract date from raster: " + raster)
+        continue
+
+    # Define output table name (using DBF format)
+    out_table = os.path.join(samples_folder, "extr_" + new_field + ".dbf")
+    
+    # Run the geostatistical analyst tool:
+    # Syntax: arcpy.ga.ExtractValuesToTable(in_features, in_rasters, out_table, {out_raster_names_table}, {add_warning_field})
+    arcpy.ga.ExtractValuesToTable(samples_shp, raster_path, out_table, "", "DO_NOT_ADD_WARNING_FIELD")
+    
+    # Ensure the computed date field exists:
+    fields = [f.name for f in arcpy.ListFields(out_table)]
+    if new_field not in fields:
+        # Add the new field and calculate it from the "Value" field.
+        arcpy.AddField_management(out_table, new_field, "DOUBLE")
+        arcpy.CalculateField_management(out_table, new_field, "!Value!", "PYTHON3")
+    
+    # Now remove unwanted fields ("Value" and "SrCID_Rast")
+    for unwanted in ["Value", "SrCID_Rast"]:
+        if unwanted in fields:
+            arcpy.DeleteField_management(out_table, unwanted)
+            arcpy.AddMessage("Deleted field '{}' from table {}".format(unwanted, out_table))
+    
+    extracted_tables.append((out_table, new_field))
+    arcpy.AddMessage("Processed raster: {} and retained join key with computed field: {}".format(raster, new_field))
+
+if not extracted_tables:
+    arcpy.AddError("No tables were generated. Please check your raster naming convention.")
+    raise SystemExit
+
+# ----------------------------------------------------------------------
+# Create a new master join table that contains ALL join keys from the samples shapefile.
+# We will build this table with a single field "SrcID_Feat" (populated with the FID of each record).
+master_table = os.path.join(samples_folder, "Master_Join_Table.dbf")
+arcpy.CreateTable_management(samples_folder, "Master_Join_Table.dbf")
+arcpy.AddField_management(master_table, "SrcID_Feat", "LONG")
+
+# Populate the master table with all FID values from the samples shapefile.
+with arcpy.da.InsertCursor(master_table, ["SrcID_Feat"]) as icursor:
+    with arcpy.da.SearchCursor(samples_shp, ["FID"]) as scursor:
+        for row in scursor:
+            icursor.insertRow(row)
+arcpy.AddMessage("Created master table with all join keys from the samples shapefile.")
+
+# ----------------------------------------------------------------------
+# Join each extracted table's computed date field to the master table using the key "SrcID_Feat"
+for table, date_field in extracted_tables:
+    arcpy.JoinField_management(master_table, "SrcID_Feat", table, "SrcID_Feat", [date_field])
+    arcpy.AddMessage("Joined field {} from table {} to master table.".format(date_field, table))
+
+# ----------------------------------------------------------------------
+# Create a copy of the original samples shapefile for the final output.
+final_shp = os.path.join(samples_folder, "Samples_with_RasterValues.shp")
+arcpy.CopyFeatures_management(samples_shp, final_shp)
+arcpy.AddMessage("Created a copy of the samples shapefile: " + final_shp)
+
+# Now, join the master table to the new shapefile.
+# We use the samples' FID (from final_shp) and the master table's SrcID_Feat.
+arcpy.JoinField_management(final_shp, "FID", master_table, "SrcID_Feat")
+arcpy.AddMessage("Permanently joined master table to the final shapefile. All records are kept.")
+
+arcpy.AddMessage("Process completed. Final output saved as: " + final_shp)
+
