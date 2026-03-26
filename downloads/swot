@@ -2,7 +2,7 @@
 
 help_message = """
 Download products from your hydroweb.next projects (https://hydroweb.next.theia-land.fr) using the py-hydroweb lib (https://pypi.org/project/py-hydroweb/)
-This script is an example tuned for your last hydroweb.next project but feel free to adapt it for future requests.
+This script is an example tuned for the last hydroweb.next project. To be adapted for future requests and needs. 
 Follow these steps:
 1. If not already done, install py-hydroweb latest version using `pip install -U py-hydroweb` (WARNING: python >= 3.8 is required)
 2a. Generate an API-Key from hydroweb.next portal in your user settings
