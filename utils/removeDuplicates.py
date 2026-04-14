@@ -1,9 +1,16 @@
-# Detects and moves duplicates | It also creates a log file with all the pairings.
-# Iban Ameztoy April 2026 - Started after the release of SWOT version D.
-
-#E.g.
-#SWOT_L2_HR_Raster_100m_UTM29Q_N_x_x_x_039_169_093F_20250927T024038_20250927T024059_PID0_01 and SWOT_L2_HR_Raster_100m_UTM29Q_N_x_x_x_039_169_093F_20250927T024038_20250927T024059_PID0_02
-# _01 is moved to "moved" folder and _02 is kept. See SWOT naming convention.
+# Detects and moves duplicate files. It also creates a log file listing all matched pairs.
+# Iban Ameztoy, April 2026 — started after the release of SWOT version D.
+#
+# This script was created because downloaded SWOT HR 100 m files may include not only the final products,
+# but also intermediate generation attempts. For example, PID0_01 and PID0_03 can correspond to the same image.
+# As a result, multiple duplicate files may exist for the same scene and date.
+#
+# Example:
+# SWOT_L2_HR_Raster_100m_UTM29Q_N_x_x_x_039_169_093F_20250927T024038_20250927T024059_PID0_01
+# SWOT_L2_HR_Raster_100m_UTM29Q_N_x_x_x_039_169_093F_20250927T024038_20250927T024059_PID0_02
+#
+# In this case, _01 is moved to the "moved" folder and _02 is kept.
+# See the SWOT naming convention for details.
 
 
 from __future__ import annotations
